@@ -27,6 +27,7 @@
   --success-soft: rgba(47, 122, 85, 0.12);
   --warning: #a15c07;
   --warning-soft: rgba(202, 138, 4, 0.14);
+  --warning-strong: #92400e; /* 5.6:1 on --warning-soft, where --warning drops below 4.5:1 */
 
   /* Chart roles (validated with the dataviz palette checker on white) */
   --series-expense: #d97706;
@@ -58,6 +59,7 @@
   --color-success-soft: var(--success-soft);
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
+  --color-warning-strong: var(--warning-strong);
   --color-expense: var(--series-expense);
   --color-income: var(--series-income);
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;

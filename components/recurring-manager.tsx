@@ -1,13 +1,13 @@
 "use client";
 
 import { Fragment, useActionState, useCallback, useEffect, useState, useTransition } from "react";
-import { LoaderCircle, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, LoaderCircle, Pause, Pencil, Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { pauseRecurring, removeRecurring, saveRecurring, type ActionState } from "@/app/actions";
 import type { CategoryNode, Recurring } from "@/lib/data";
 import type { TxType } from "@/lib/category-defs";
 import { formatDate, GRANULARITIES, type Granularity } from "@/lib/dates";
 import { centsToInput, formatMoney } from "@/lib/money";
-import { describeSchedule, MAX_EVERY } from "@/lib/recurring";
+import { describeSchedule, MAX_EVERY, remaining } from "@/lib/recurring";
 import { CategoryIcon } from "./category-icon";
 import { Modal } from "./modal";
 import { CategorySelect, TypeToggle } from "./transaction-form";
@@ -35,6 +35,11 @@ export function AddRecurringButton({ categories, currency, today }: { categories
       </Modal>
     </>
   );
+}
+
+function Chip({ tone, children }: { tone?: "warning" | "accent"; children: React.ReactNode }) {
+  const colors = tone === "warning" ? "bg-warning-soft text-warning-strong" : tone === "accent" ? "bg-accent/10 text-accent" : "bg-sunken text-muted";
+  return <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ${colors}`}>{children}</span>;
 }
 
 /** Matches the order listRecurring returns: active, then paused, then ended. */
@@ -81,28 +86,39 @@ export function RecurringList({ rules, categories, currency, canEdit, today }: {
           const group = rank(r);
           const cat = lookup.get(r.categoryId);
           const sub = r.subcategoryId ? lookup.get(r.subcategoryId) : null;
-          const status = r.nextDate === null
-            ? "Ended"
-            : r.paused
-              ? "Paused"
-              : `Next ${formatDate(r.nextDate, { month: "short", day: "numeric", year: r.nextDate.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric" })}`;
+          const categoryName = sub ? `${cat?.name} › ${sub.name}` : (cat?.name ?? "Uncategorized");
+          const left = r.nextDate && r.endDate ? remaining(r.startDate, r.unit, r.every, r.nextDate, r.endDate) : null;
           const content = (
             <>
               <CategoryIcon icon={cat?.icon ?? "tag"} color={cat?.color ?? "#94a3b8"} />
-              {/* On phones the amount shares the name's line so the lines below get the full width; from sm it is centered beside the row's buttons. */}
+              {/* On phones the amount shares the title's line so the lines below get the full width; from sm it is centered beside the row's buttons. */}
               <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3">
-                <span className="line-clamp-2 min-w-0 font-medium break-words">
-                  {cat?.name ?? "Uncategorized"}
-                  {sub && <span className="text-muted"> › {sub.name}</span>}
-                </span>
+                {/* The note names the bill, so it leads; the category drops to the line under it. */}
+                <span className="line-clamp-2 min-w-0 font-medium break-words">{r.note || categoryName}</span>
                 <span className={`tabular text-right font-semibold sm:row-span-3 sm:self-center ${group ? "text-muted" : r.type === "income" ? "text-success" : ""}`}>
                   <span className="sr-only">{r.type === "income" ? "Income" : "Expense"} </span>
                   {formatMoney(r.amount, currency)}
                 </span>
-                {r.note && <span className="col-span-2 truncate text-sm text-muted sm:col-span-1">{r.note}</span>}
-                <span className="col-span-2 text-sm text-muted sm:col-span-1">
-                  {describeSchedule(r.unit, r.every, r.startDate)} ·{" "}
-                  <span className={`whitespace-nowrap ${r.paused && r.nextDate ? "font-medium text-warning" : ""}`}>{status}</span>
+                {r.note && <span className="col-span-2 truncate text-sm text-muted sm:col-span-1">{categoryName}</span>}
+                <span className="col-span-2 mt-1.5 flex flex-wrap gap-1.5 sm:col-span-1">
+                  <Chip>
+                    <Repeat className="size-3.5" aria-hidden />
+                    {describeSchedule(r.unit, r.every, r.startDate)}
+                  </Chip>
+                  {r.nextDate === null ? (
+                    <Chip>Ended</Chip>
+                  ) : r.paused ? (
+                    <Chip tone="warning">
+                      <Pause className="size-3.5" aria-hidden />
+                      Paused
+                    </Chip>
+                  ) : (
+                    <Chip>
+                      <CalendarClock className="size-3.5" aria-hidden />
+                      Next {formatDate(r.nextDate, { month: "short", day: "numeric", year: r.nextDate.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric" })}
+                    </Chip>
+                  )}
+                  {left !== null && <Chip tone="accent">{left === 1 ? "Last one" : `${left} left`}</Chip>}
                 </span>
               </span>
             </>

@@ -32,10 +32,11 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
-/** e.g. "Every month on the 15th", "Every 2 weeks on Monday". */
+const ADVERBS: Record<Granularity, string> = { day: "Daily", week: "Weekly", month: "Monthly", year: "Yearly" };
+
+/** e.g. "Monthly on the 15th", "Every 2 weeks on Monday". */
 export function describeSchedule(unit: Granularity, every: number, start: string): string {
-  const [one, many] = UNIT_NAMES[unit];
-  const base = every === 1 ? `Every ${one}` : `Every ${every} ${many}`;
+  const base = every === 1 ? ADVERBS[unit] : `Every ${every} ${UNIT_NAMES[unit][1]}`;
   switch (unit) {
     case "day":
       return base;
@@ -46,6 +47,15 @@ export function describeSchedule(unit: Granularity, every: number, start: string
     case "year":
       return `${base} on ${formatDate(start, { month: "long", day: "numeric" })}`;
   }
+}
+
+/** Occurrences from `next` through `end`, or null past `cap` (a long daily rule isn't worth counting). */
+export function remaining(start: string, unit: Granularity, every: number, next: string, end: string, cap = 999): number | null {
+  let k = 0;
+  while (occurrence(start, unit, every, k) < next) if (++k > 5000) return null;
+  let n = 0;
+  while (occurrence(start, unit, every, k + n) <= end) if (++n > cap) return null;
+  return n;
 }
 
 /** Average occurrences per month, for a rough monthly total. */
