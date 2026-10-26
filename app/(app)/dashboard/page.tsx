@@ -41,6 +41,9 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
   ]);
   const { currency } = settings;
   const net = summary.income - summary.expense;
+  const { scheduled } = summary;
+  const projectedNet = net + scheduled.income - scheduled.expense;
+  const bills = summary.recurring.expense;
   const budgeted = budgets
     .filter((b) => b.budget !== null)
     .sort((a, b) => b.spent / b.budget! - a.spent / a.budget!)
@@ -64,14 +67,40 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
         today={today}
       />
 
-      <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Kpi label="Expenses" value={formatMoney(summary.expense, currency)} dot="var(--series-expense)" />
-        <Kpi label="Income" value={formatMoney(summary.income, currency)} dot="var(--series-income)" />
-        <Kpi label="Net" value={formatMoney(net, currency)} className={net < 0 ? "text-danger" : "text-success"} />
+      <dl className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <Kpi
+          label="Expenses"
+          value={formatMoney(summary.expense, currency)}
+          dot="var(--series-expense)"
+          hint={scheduled.expense ? `+${formatMoney(scheduled.expense, currency)} scheduled` : undefined}
+        />
+        <Kpi
+          label="Income"
+          value={formatMoney(summary.income, currency)}
+          dot="var(--series-income)"
+          hint={scheduled.income ? `+${formatMoney(scheduled.income, currency)} scheduled` : undefined}
+        />
+        <Kpi
+          label="Net"
+          value={formatMoney(net, currency)}
+          className={net < 0 ? "text-danger" : "text-success"}
+          hint={scheduled.count ? `${formatMoney(projectedNet, currency)} with scheduled` : undefined}
+        />
         <Kpi
           label="Avg. spent per day"
           value={formatMoney(Math.round(summary.expense / range.days), currency)}
           hint={`${summary.count} transaction${summary.count === 1 ? "" : "s"}`}
+        />
+        {/* Five cards leave one alone on the last row of two columns, so it takes the full row. */}
+        <Kpi
+          label="Recurring payments"
+          value={formatMoney(bills.posted + bills.scheduled, currency)}
+          hint={
+            bills.scheduled
+              ? `${formatMoney(bills.posted, currency)} paid · ${formatMoney(bills.scheduled, currency)} to come`
+              : `${bills.count} payment${bills.count === 1 ? "" : "s"}`
+          }
+          span="col-span-2 lg:col-span-1"
         />
       </dl>
 
@@ -81,6 +110,8 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
             data={summary.series}
             expense={summary.expenseByCategory}
             income={summary.incomeByCategory}
+            scheduledExpense={scheduled.expenseByCategory}
+            scheduledIncome={scheduled.incomeByCategory}
             group={range.group}
             currency={currency}
           />
@@ -120,14 +151,21 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
   );
 }
 
-function Kpi({ label, value, hint, dot, className = "" }: { label: string; value: string; hint?: string; dot?: string; className?: string }) {
+function Kpi({ label, value, hint, dot, className = "", span = "" }: {
+  label: string;
+  value: string;
+  hint?: string;
+  dot?: string;
+  className?: string;
+  span?: string;
+}) {
   return (
-    <div className="glass min-w-0 rounded-2xl p-3 sm:p-4">
+    <div className={`glass min-w-0 rounded-2xl p-3 sm:p-4 ${span}`}>
       <dt className="flex items-center gap-2 text-xs text-muted min-[360px]:text-sm">
         {dot && <span aria-hidden className="size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: dot }} />}
         {label}
       </dt>
-      <dd title={value} className={`tabular mt-1 truncate text-base font-bold tracking-tight min-[360px]:text-lg sm:text-2xl ${className}`}>
+      <dd title={value} className={`tabular mt-1 truncate text-base font-bold tracking-tight min-[360px]:text-lg sm:text-2xl lg:text-xl xl:text-2xl ${className}`}>
         {value}
       </dd>
       {hint && <dd className="mt-0.5 text-xs text-subtle">{hint}</dd>}
@@ -140,9 +178,9 @@ function DashboardSkeleton() {
     <div aria-busy aria-label="Loading dashboard" className="flex flex-col gap-6">
       <Skeleton className="h-16 w-64" />
       <Skeleton className="h-28" />
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {Array.from({ length: 4 }, (_, i) => (
-          <Skeleton key={i} className="h-24" />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        {Array.from({ length: 5 }, (_, i) => (
+          <Skeleton key={i} className={`h-24 ${i === 4 ? "col-span-2 lg:col-span-1" : ""}`} />
         ))}
       </div>
       <div className="grid gap-6 lg:grid-cols-5">

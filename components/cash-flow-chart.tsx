@@ -16,28 +16,45 @@ import type { CategoryTotal, SeriesPoint } from "@/lib/data";
 import { bucketLabel, bucketTitle, type Granularity } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 
+/** Scheduled (not yet posted) recurring amounts use this prefix on their category's data key. */
+const SCHEDULED = "s:";
+
+/** Categories in `actual` order, then any that only have scheduled amounts. */
+function union(actual: CategoryTotal[], scheduled: CategoryTotal[]): CategoryTotal[] {
+  const ids = new Set(actual.map((c) => c.id));
+  return [...actual, ...scheduled.filter((c) => !ids.has(c.id))];
+}
+
 /**
  * Two stacked bars per bucket, expenses then income, each split by category.
  * Only categories with transactions in the range get a series, and a bucket
- * with no income (or no expenses) draws nothing on that side.
+ * with no income (or no expenses) draws nothing on that side. Upcoming
+ * recurring occurrences stack on top as faded, outlined segments.
  */
-export function CashFlowChart({ data, expense, income, group, currency }: {
+export function CashFlowChart({ data, expense, income, scheduledExpense, scheduledIncome, group, currency }: {
   data: SeriesPoint[];
   expense: CategoryTotal[];
   income: CategoryTotal[];
+  scheduledExpense: CategoryTotal[];
+  scheduledIncome: CategoryTotal[];
   group: Granularity;
   currency: string;
 }) {
   const [view, setView] = useState<"chart" | "table">("chart");
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const expenseCats = union(expense, scheduledExpense);
+  const incomeCats = union(income, scheduledIncome);
   // Render order is stack order: expenses form the left bar, and the largest category sits at the bottom.
-  const all = [...expense, ...income];
-  const incomeIds = new Set(income.map((c) => c.id));
+  const all = [...expenseCats, ...incomeCats];
+  const incomeIds = new Set(incomeCats.map((c) => c.id));
   const visible = all.filter((c) => !hidden.has(c.id));
+  const scheduledIds = new Set([...scheduledExpense, ...scheduledIncome].map((c) => c.id));
+  const hasScheduled = scheduledIds.size > 0;
 
   const rows = data.map((d) => {
     const row: Record<string, string | number> = { bucket: d.bucket, label: bucketLabel(d.bucket, group) };
     for (const [id, amount] of Object.entries(d.byCategory)) row[id] = amount;
+    for (const [id, amount] of Object.entries(d.scheduled.byCategory)) row[SCHEDULED + id] = amount;
     return row;
   });
 
@@ -71,8 +88,8 @@ export function CashFlowChart({ data, expense, income, group, currency }: {
       <div className="mb-3">
         <div className="flex min-w-0 flex-col gap-1">
           {[
-            { label: "Expenses", list: expense },
-            { label: "Income", list: income },
+            { label: "Expenses", list: expenseCats },
+            { label: "Income", list: incomeCats },
           ]
             .filter((g) => g.list.length)
             .map((g) => (
@@ -95,6 +112,12 @@ export function CashFlowChart({ data, expense, income, group, currency }: {
                 ))}
               </ul>
             ))}
+          {hasScheduled && (
+            <p className="flex items-center gap-1.5 text-xs text-muted sm:pl-18">
+              <span aria-hidden className="size-3 rounded-sm border border-dashed border-muted bg-sunken" />
+              Faded segments are scheduled recurring transactions
+            </p>
+          )}
         </div>
       </div>
 
@@ -102,7 +125,7 @@ export function CashFlowChart({ data, expense, income, group, currency }: {
         <div
           className="h-72 w-full"
           role="img"
-          aria-label={`Expenses and income by category per ${group}. Switch to the table view for exact values.`}
+          aria-label={`Expenses and income by category per ${group}${hasScheduled ? ", including scheduled recurring transactions" : ""}. Switch to the table view for exact values.`}
         >
           <ResponsiveContainer>
             <BarChart
@@ -140,6 +163,22 @@ export function CashFlowChart({ data, expense, income, group, currency }: {
                   maxBarSize={36}
                 />
               ))}
+              {/* Declared after every posted series so scheduled amounts stack on top. */}
+              {visible
+                .filter((c) => scheduledIds.has(c.id))
+                .map((c) => (
+                  <Bar
+                    key={SCHEDULED + c.id}
+                    dataKey={SCHEDULED + c.id}
+                    name={c.name}
+                    stackId={incomeIds.has(c.id) ? "income" : "expense"}
+                    fill={c.color}
+                    fillOpacity={0.3}
+                    stroke={c.color}
+                    strokeDasharray="3 2"
+                    maxBarSize={36}
+                  />
+                ))}
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -159,8 +198,14 @@ export function CashFlowChart({ data, expense, income, group, currency }: {
               {data.map((d) => (
                 <tr key={d.bucket}>
                   <th scope="row" className="px-3 py-2 text-left font-normal">{bucketTitle(d.bucket, group)}</th>
-                  <td className="px-3 py-2 text-right">{formatMoney(d.expense, currency)}</td>
-                  <td className="px-3 py-2 text-right">{formatMoney(d.income, currency)}</td>
+                  <td className="px-3 py-2 text-right">
+                    {formatMoney(d.expense, currency)}
+                    <ScheduledNote amount={d.scheduled.expense} currency={currency} />
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {formatMoney(d.income, currency)}
+                    <ScheduledNote amount={d.scheduled.income} currency={currency} />
+                  </td>
                   <td className={`px-3 py-2 text-right ${d.income - d.expense < 0 ? "text-danger" : ""}`}>
                     {formatMoney(d.income - d.expense, currency)}
                   </td>
@@ -174,6 +219,11 @@ export function CashFlowChart({ data, expense, income, group, currency }: {
   );
 }
 
+function ScheduledNote({ amount, currency }: { amount: number; currency: string }) {
+  if (!amount) return null;
+  return <span className="block text-xs text-subtle">+{formatMoney(amount, currency)} scheduled</span>;
+}
+
 /** Lists only the categories present in the hovered bucket, grouped into expenses and income. */
 function ChartTooltip({ active, payload, incomeIds, group, currency }: TooltipContentProps & {
   incomeIds: Set<string>;
@@ -183,9 +233,10 @@ function ChartTooltip({ active, payload, incomeIds, group, currency }: TooltipCo
   if (!active || !payload?.length) return null;
   const bucket = String((payload[0].payload as { bucket: string }).bucket);
   const entries = payload.filter((p) => Number(p.value));
+  const id = (p: (typeof entries)[number]) => String(p.dataKey).replace(SCHEDULED, "");
   const sections = [
-    { label: "Expenses", items: entries.filter((p) => !incomeIds.has(String(p.dataKey))) },
-    { label: "Income", items: entries.filter((p) => incomeIds.has(String(p.dataKey))) },
+    { label: "Expenses", items: entries.filter((p) => !incomeIds.has(id(p))) },
+    { label: "Income", items: entries.filter((p) => incomeIds.has(id(p))) },
   ].filter((s) => s.items.length);
 
   return (
@@ -204,8 +255,13 @@ function ChartTooltip({ active, payload, incomeIds, group, currency }: TooltipCo
               .sort((a, b) => Number(b.value) - Number(a.value))
               .map((p) => (
                 <p key={String(p.dataKey)} className="flex items-center gap-2 text-muted">
-                  <span aria-hidden className="size-2.5 rounded-sm" style={{ backgroundColor: p.color }} />
+                  <span
+                    aria-hidden
+                    className={`size-2.5 rounded-sm ${String(p.dataKey).startsWith(SCHEDULED) ? "opacity-40" : ""}`}
+                    style={{ backgroundColor: p.color }}
+                  />
                   {p.name}
+                  {String(p.dataKey).startsWith(SCHEDULED) && <span className="text-xs text-subtle">scheduled</span>}
                   <span className="tabular ml-auto pl-4 font-medium text-fg">
                     {formatMoney(Number(p.value), currency)}
                   </span>
