@@ -16,17 +16,19 @@ function place(anchor: HTMLElement, popover: HTMLElement) {
 
   // Anchors by the near edges. Opens below when the content fits there (or nowhere fits better).
   // Properties are overwritten rather than cleared first: clearing max-height would reset the list's scroll.
+  // Fixed boxes measure right/bottom from the viewport minus scrollbars, which innerWidth/innerHeight include.
+  const { clientWidth: vw, clientHeight: vh } = document.documentElement;
   const r = anchor.getBoundingClientRect();
-  const below = innerHeight - r.bottom - GAP - EDGE;
+  const below = vh - r.bottom - GAP - EDGE;
   const above = r.top - GAP - EDGE;
   const need = popover.scrollHeight;
   const down = below >= need || (above < need && below >= above);
   style.top = down ? `${r.bottom + GAP}px` : "auto";
-  style.bottom = down ? "auto" : `${innerHeight - r.top + GAP}px`;
+  style.bottom = down ? "auto" : `${vh - r.top + GAP}px`;
   style.maxHeight = `${down ? below : above}px`;
-  const leftAligned = r.left + r.width / 2 <= innerWidth / 2;
+  const leftAligned = r.left + r.width / 2 <= vw / 2;
   style.left = leftAligned ? `${Math.max(EDGE, r.left)}px` : "auto";
-  style.right = leftAligned ? "auto" : `${Math.max(EDGE, innerWidth - r.right)}px`;
+  style.right = leftAligned ? "auto" : `${Math.max(EDGE, vw - r.right)}px`;
   style.minWidth = `${r.width}px`;
 }
 
