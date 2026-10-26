@@ -3,7 +3,8 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ArrowRight, Target } from "lucide-react";
 import { getToday, getLedger } from "@/lib/session";
-import { getBudgetStatus, getSettings, getSummary, listCategories } from "@/lib/data";
+import { getBudgetStatus, getInsight, getSettings, getSummary, listCategories } from "@/lib/data";
+import { geminiEnabled } from "@/lib/gemini";
 import { endOf, resolveRange, startOf, type RangeParams } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { AddTransactionButton } from "@/components/add-transaction-button";
@@ -11,6 +12,7 @@ import { BudgetMeter } from "@/components/budget-meter";
 import { CashFlowChart } from "@/components/cash-flow-chart";
 import { CategoryBreakdown } from "@/components/category-breakdown";
 import { CategoryIcon } from "@/components/category-icon";
+import { InsightCard } from "@/components/insight-card";
 import { RangePicker } from "@/components/range-picker";
 import { Card, EmptyState, PageHeader, Skeleton } from "@/components/ui";
 
@@ -33,11 +35,13 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
   const params: RangeParams = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, first(v)]));
   const range = resolveRange(params, today);
 
-  const [summary, settings, categories, budgets] = await Promise.all([
+  const ai = geminiEnabled();
+  const [summary, settings, categories, budgets, insight] = await Promise.all([
     getSummary(ledger.ledgerId, range),
     getSettings(ledger.ledgerId),
     listCategories(ledger.ledgerId),
     getBudgetStatus(ledger.ledgerId, startOf(today, "month"), endOf(today, "month")),
+    ai ? getInsight(ledger.ledgerId) : null,
   ]);
   const { currency } = settings;
   const net = summary.income - summary.expense;
@@ -58,6 +62,8 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
         description="Here's how your money moved."
         actions={<AddTransactionButton categories={categories} currency={currency} date={today} canEdit={ledger.role !== "viewer"} />}
       />
+
+      {ai && <InsightCard initial={insight} />}
 
       {/* Keyed so its local selection resets to the range actually shown; the page stays mounted across navigations. */}
       <RangePicker
@@ -177,6 +183,7 @@ function DashboardSkeleton() {
   return (
     <div aria-busy aria-label="Loading dashboard" className="flex flex-col gap-6">
       <Skeleton className="h-16 w-64" />
+      {geminiEnabled() && <Skeleton className="h-80 lg:h-96" />}
       <Skeleton className="h-28" />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {Array.from({ length: 5 }, (_, i) => (

@@ -64,12 +64,15 @@ type RecurringDoc = {
  */
 type BudgetDoc = { _id: ObjectId; ledgerId: string; categoryId: ObjectId; from?: string | null; amount: number | null };
 type SettingsDoc = { _id: string; currency: string }; // _id = ledgerId
+/** The latest Gemini overview for a ledger, kept so the dashboard doesn't spend free-tier quota on every load. */
+type InsightDoc = { _id: string; overview: string; steps: string[]; nextMonth: string; createdAt: Date }; // _id = ledgerId
 
 const categories = db.collection<CategoryDoc>("categories");
 const transactions = db.collection<TransactionDoc>("transactions");
 const budgets = db.collection<BudgetDoc>("budgets");
 const settings = db.collection<SettingsDoc>("settings");
 const recurring = db.collection<RecurringDoc>("recurring");
+const insights = db.collection<InsightDoc>("insights");
 
 // ---------- One-time setup ----------
 
@@ -217,6 +220,23 @@ export async function getSettings(ledgerId: string): Promise<Settings> {
 
 export async function updateSettings(ledgerId: string, patch: Settings): Promise<void> {
   await settings.updateOne({ _id: ledgerId }, { $set: patch }, { upsert: true });
+}
+
+// ---------- Insights ----------
+
+export type Insight = { overview: string; steps: string[]; nextMonth: string; createdAt: string };
+
+export async function getInsight(ledgerId: string): Promise<Insight | null> {
+  const doc = await insights.findOne({ _id: ledgerId });
+  // Docs saved in the earlier summary/tips shape have no overview; they're regenerated on request.
+  if (!doc?.overview) return null;
+  return { overview: doc.overview, steps: doc.steps, nextMonth: doc.nextMonth, createdAt: doc.createdAt.toISOString() };
+}
+
+export async function saveInsight(ledgerId: string, insight: Omit<Insight, "createdAt">): Promise<Insight> {
+  const createdAt = new Date();
+  await insights.replaceOne({ _id: ledgerId }, { ...insight, createdAt }, { upsert: true });
+  return { ...insight, createdAt: createdAt.toISOString() };
 }
 
 // ---------- Categories ----------
@@ -1096,6 +1116,7 @@ export async function deleteLedgerData(ledgerId: string, session?: ClientSession
   await budgets.deleteMany({ ledgerId }, { session });
   await categories.deleteMany({ ledgerId }, { session });
   await settings.deleteOne({ _id: ledgerId }, { session });
+  await insights.deleteOne({ _id: ledgerId }, { session });
 }
 
 /**
@@ -1172,4 +1193,6 @@ export async function mergeLedgerInto(fromLedgerId: string, toLedgerId: string, 
   }
 
   await settings.deleteOne({ _id: fromLedgerId }, { session });
+  // Both ledgers' advice describes data that just changed.
+  await insights.deleteMany({ _id: { $in: [fromLedgerId, toLedgerId] } }, { session });
 }

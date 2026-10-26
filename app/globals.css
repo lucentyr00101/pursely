@@ -22,6 +22,7 @@
   --on-primary: #ffffff;
   --ring: #7e22ce;
   --accent: #7e22ce;
+  --accent-soft: rgba(126, 34, 206, 0.07); /* AI content; --accent text stays above 5.9:1 on it */
   --danger: #b42318;
   --danger-soft: rgba(180, 35, 24, 0.1);
   --success: #2f7a55;
@@ -55,6 +56,7 @@
   --color-on-primary: var(--on-primary);
   --color-ring: var(--ring);
   --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-success: var(--success);
