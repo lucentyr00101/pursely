@@ -2,21 +2,26 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarDays, FolderTree, LayoutDashboard, Settings, Target } from "lucide-react";
+import { CalendarDays, FolderTree, LayoutDashboard, Repeat, Settings, Target } from "lucide-react";
 import { useDashboardHref } from "./dashboard-href";
 import { Logo } from "./logo";
 
 const LINKS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/transactions", label: "Daily", icon: CalendarDays },
+  // Side nav only: the bottom nav has five slots, and Daily links to it on phones.
+  { href: "/transactions/recurring", label: "Recurring", icon: Repeat, sideOnly: true },
   { href: "/categories", label: "Categories", icon: FolderTree },
   { href: "/budgets", label: "Budgets", icon: Target },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
+/** The longest matching link wins, so Recurring doesn't also light up Daily. */
 function useActive() {
   const pathname = usePathname();
-  return (href: string) => pathname === href || pathname.startsWith(`${href}/`);
+  const matches = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
+  const current = LINKS.filter((l) => matches(l.href)).sort((a, b) => b.href.length - a.href.length)[0];
+  return (href: string) => current?.href === href;
 }
 
 /** Nav links, with the dashboard pointing at the range the user last picked. */
@@ -59,8 +64,10 @@ export function SideNav() {
 }
 
 export function BottomNav() {
-  const isActive = useActive();
-  const links = useLinks();
+  const pathname = usePathname();
+  const links = useLinks().filter((link) => !("sideOnly" in link));
+  // No Recurring tab here, so Daily stays highlighted on its pages.
+  const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
   return (
     <nav
       aria-label="Main"
