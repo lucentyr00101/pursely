@@ -7,7 +7,7 @@ import type { CategoryNode, Recurring } from "@/lib/data";
 import type { TxType } from "@/lib/category-defs";
 import { formatDate, GRANULARITIES, type Granularity } from "@/lib/dates";
 import { centsToInput, formatMoney } from "@/lib/money";
-import { describeSchedule, MAX_EVERY, remaining } from "@/lib/recurring";
+import { describeSchedule, MAX_EVERY, perMonth, remaining } from "@/lib/recurring";
 import { CategoryIcon } from "./category-icon";
 import { Modal } from "./modal";
 import { CategorySelect, TypeToggle } from "./transaction-form";
@@ -45,6 +45,19 @@ function Chip({ tone, children }: { tone?: "warning" | "accent"; children: React
 /** Matches the order listRecurring returns: active, then paused, then ended. */
 const rank = (r: Recurring) => (r.nextDate === null ? 2 : r.paused ? 1 : 0);
 
+const SORTS = {
+  "left-asc": "Fewest months left",
+  "left-desc": "Most months left",
+  "monthly-asc": "Lowest monthly amount",
+  "monthly-desc": "Highest monthly amount",
+  category: "Category",
+} as const;
+type Sort = keyof typeof SORTS;
+
+/** Months left order by end date: rules without one never end, so they count as the most months left. */
+const endKey = (r: Recurring) => r.endDate ?? "9999-12-31";
+const monthly = (r: Recurring) => r.amount * perMonth(r.unit, r.every);
+
 export function RecurringList({ rules, categories, currency, canEdit, today }: {
   rules: Recurring[];
   categories: CategoryNode[];
@@ -58,7 +71,26 @@ export function RecurringList({ rules, categories, currency, canEdit, today }: {
   const [toggling, setToggling] = useState<string>();
   const [error, setError] = useState<string>();
   const [editError, setEditError] = useState<string>();
+  const [sort, setSort] = useState<Sort>("left-asc");
   const lookup = buildLookup(categories);
+  const categoryName = (r: Recurring) => {
+    const cat = lookup.get(r.categoryId);
+    const sub = r.subcategoryId ? lookup.get(r.subcategoryId) : null;
+    return sub ? `${cat?.name} › ${sub.name}` : (cat?.name ?? "Uncategorized");
+  };
+  const label = (r: Recurring) => r.note || categoryName(r);
+  // Sorting stays within the active, paused and ended groups.
+  const sorted = rules.toSorted((a, b) => {
+    const byGroup = rank(a) - rank(b);
+    if (byGroup) return byGroup;
+    let order = 0;
+    if (sort === "left-asc") order = endKey(a).localeCompare(endKey(b));
+    else if (sort === "left-desc") order = endKey(b).localeCompare(endKey(a));
+    else if (sort === "monthly-asc") order = monthly(a) - monthly(b);
+    else if (sort === "monthly-desc") order = monthly(b) - monthly(a);
+    else order = categoryName(a).localeCompare(categoryName(b));
+    return order || label(a).localeCompare(label(b));
+  });
   const closeEdit = useCallback(() => {
     setEditing(null);
     setEditError(undefined);
@@ -80,13 +112,25 @@ export function RecurringList({ rules, categories, currency, canEdit, today }: {
 
   return (
     <>
+      {rules.length > 1 && (
+        <div className="mb-2 flex items-center justify-end gap-2">
+          <label htmlFor="rc-sort" className="text-sm font-medium text-muted">
+            Sort by
+          </label>
+          <select id="rc-sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="field w-auto cursor-pointer">
+            {Object.entries(SORTS).map(([value, name]) => (
+              <option key={value} value={value}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <FormError message={error} />
       <ul className="divide-y divide-line">
-        {rules.map((r, i) => {
+        {sorted.map((r, i) => {
           const group = rank(r);
           const cat = lookup.get(r.categoryId);
-          const sub = r.subcategoryId ? lookup.get(r.subcategoryId) : null;
-          const categoryName = sub ? `${cat?.name} › ${sub.name}` : (cat?.name ?? "Uncategorized");
           const left = r.nextDate && r.endDate ? remaining(r.startDate, r.unit, r.every, r.nextDate, r.endDate) : null;
           const content = (
             <>
@@ -94,12 +138,12 @@ export function RecurringList({ rules, categories, currency, canEdit, today }: {
               {/* On phones the amount shares the title's line so the lines below get the full width; from sm it is centered beside the row's buttons. */}
               <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3">
                 {/* The note names the bill, so it leads; the category drops to the line under it. */}
-                <span className="line-clamp-2 min-w-0 font-medium break-words">{r.note || categoryName}</span>
+                <span className="line-clamp-2 min-w-0 font-medium break-words">{label(r)}</span>
                 <span className={`tabular text-right font-semibold sm:row-span-3 sm:self-center ${group ? "text-muted" : r.type === "income" ? "text-success" : ""}`}>
                   <span className="sr-only">{r.type === "income" ? "Income" : "Expense"} </span>
                   {formatMoney(r.amount, currency)}
                 </span>
-                {r.note && <span className="col-span-2 truncate text-sm text-muted sm:col-span-1">{categoryName}</span>}
+                {r.note && <span className="col-span-2 truncate text-sm text-muted sm:col-span-1">{categoryName(r)}</span>}
                 <span className="col-span-2 mt-1.5 flex flex-wrap gap-1.5 sm:col-span-1">
                   <Chip>
                     <Repeat className="size-3.5" aria-hidden />
@@ -123,7 +167,7 @@ export function RecurringList({ rules, categories, currency, canEdit, today }: {
               </span>
             </>
           );
-          const header = group > 0 && group !== (i > 0 ? rank(rules[i - 1]) : 0) && (
+          const header = group > 0 && group !== (i > 0 ? rank(sorted[i - 1]) : 0) && (
             <li className="border-b-0! pt-4 pb-1">
               <h3 className="text-sm font-semibold text-muted">{group === 1 ? "Paused" : "Ended"}</h3>
             </li>
