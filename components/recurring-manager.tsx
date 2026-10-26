@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useCallback, useEffect, useState, useTransition } from "react";
+import { Fragment, useActionState, useCallback, useEffect, useState, useTransition } from "react";
 import { LoaderCircle, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { pauseRecurring, removeRecurring, saveRecurring, type ActionState } from "@/app/actions";
 import type { CategoryNode, Recurring } from "@/lib/data";
@@ -37,6 +37,9 @@ export function AddRecurringButton({ categories, currency, today }: { categories
   );
 }
 
+/** Matches the order listRecurring returns: active, then paused, then ended. */
+const rank = (r: Recurring) => (r.nextDate === null ? 2 : r.paused ? 1 : 0);
+
 export function RecurringList({ rules, categories, currency, canEdit, today }: {
   rules: Recurring[];
   categories: CategoryNode[];
@@ -47,21 +50,35 @@ export function RecurringList({ rules, categories, currency, canEdit, today }: {
   const [editing, setEditing] = useState<Recurring | null>(null);
   const [deleting, setDeleting] = useState<Recurring | null>(null);
   const [pending, start] = useTransition();
+  const [toggling, setToggling] = useState<string>();
   const [error, setError] = useState<string>();
+  const [editError, setEditError] = useState<string>();
   const lookup = buildLookup(categories);
-  const closeEdit = useCallback(() => setEditing(null), []);
+  const closeEdit = useCallback(() => {
+    setEditing(null);
+    setEditError(undefined);
+  }, []);
 
-  const togglePause = (rule: Recurring) =>
+  // From the editor, a failure shows in the dialog and success closes it.
+  const togglePause = (rule: Recurring, fromEditor = false) => {
+    setToggling(rule.id);
     start(async () => {
       const result = await pauseRecurring(rule.id, !rule.paused);
-      setError(result.ok ? undefined : result.error);
+      if (fromEditor) {
+        if (result.ok) closeEdit();
+        else setEditError(result.error);
+      } else {
+        setError(result.ok ? undefined : result.error);
+      }
     });
+  };
 
   return (
     <>
       <FormError message={error} />
       <ul className="divide-y divide-line">
-        {rules.map((r) => {
+        {rules.map((r, i) => {
+          const group = rank(r);
           const cat = lookup.get(r.categoryId);
           const sub = r.subcategoryId ? lookup.get(r.subcategoryId) : null;
           const status = r.nextDate === null
@@ -72,64 +89,119 @@ export function RecurringList({ rules, categories, currency, canEdit, today }: {
           const content = (
             <>
               <CategoryIcon icon={cat?.icon ?? "tag"} color={cat?.color ?? "#94a3b8"} />
-              {/* The amount shares the name's line, or wraps under it, so the schedule below gets the full width on phones. */}
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-baseline justify-between gap-x-3">
-                  <span className="line-clamp-2 min-w-0 font-medium break-words">
-                    {cat?.name ?? "Uncategorized"}
-                    {sub && <span className="text-muted"> › {sub.name}</span>}
-                  </span>
-                  <span className={`tabular shrink-0 font-semibold ${r.type === "income" ? "text-success" : ""}`}>
-                    <span className="sr-only">{r.type === "income" ? "Income" : "Expense"} </span>
-                    {formatMoney(r.amount, currency)}
-                  </span>
+              {/* On phones the amount shares the name's line so the lines below get the full width; from sm it is centered beside the row's buttons. */}
+              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3">
+                <span className="line-clamp-2 min-w-0 font-medium break-words">
+                  {cat?.name ?? "Uncategorized"}
+                  {sub && <span className="text-muted"> › {sub.name}</span>}
                 </span>
-                {r.note && <span className="block truncate text-sm text-muted">{r.note}</span>}
-                <span className="block text-sm text-muted">
+                <span className={`tabular text-right font-semibold sm:row-span-3 sm:self-center ${group ? "text-muted" : r.type === "income" ? "text-success" : ""}`}>
+                  <span className="sr-only">{r.type === "income" ? "Income" : "Expense"} </span>
+                  {formatMoney(r.amount, currency)}
+                </span>
+                {r.note && <span className="col-span-2 truncate text-sm text-muted sm:col-span-1">{r.note}</span>}
+                <span className="col-span-2 text-sm text-muted sm:col-span-1">
                   {describeSchedule(r.unit, r.every, r.startDate)} ·{" "}
-                  <span className={r.paused && r.nextDate ? "font-medium text-warning" : ""}>{status}</span>
+                  <span className={`whitespace-nowrap ${r.paused && r.nextDate ? "font-medium text-warning" : ""}`}>{status}</span>
                 </span>
               </span>
             </>
           );
+          const header = group > 0 && group !== (i > 0 ? rank(rules[i - 1]) : 0) && (
+            <li className="border-b-0! pt-4 pb-1">
+              <h3 className="text-sm font-semibold text-muted">{group === 1 ? "Paused" : "Ended"}</h3>
+            </li>
+          );
           return (
-            <li key={r.id} className={`flex items-center gap-1 py-1.5 ${r.paused || r.nextDate === null ? "opacity-70" : ""}`}>
-              {canEdit ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setEditing(r)}
-                    className="group -ml-2 flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-lg py-1.5 pr-2 pl-2 text-left transition-colors duration-150 hover:bg-sunken active:bg-sunken focus-visible:outline-2 focus-visible:outline-ring"
-                  >
-                    <span className="sr-only">Edit </span>
-                    {content}
-                    <Pencil className="hidden size-4 shrink-0 text-subtle transition-colors duration-150 group-hover:text-fg sm:block" aria-hidden />
-                  </button>
-                  {r.nextDate !== null && (
+            <Fragment key={r.id}>
+              {header}
+              {/* Phones get the whole row for the name and amount; pause and delete are in the editor there. */}
+              <li className="flex items-center gap-1 py-1.5">
+                {canEdit ? (
+                  <>
                     <button
                       type="button"
-                      className="icon-btn shrink-0"
-                      aria-label={r.paused ? "Resume" : "Pause"}
-                      disabled={pending}
-                      onClick={() => togglePause(r)}
+                      onClick={() => setEditing(r)}
+                      className="group -ml-2 flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-lg py-1.5 pr-2 pl-2 text-left transition-colors duration-150 hover:bg-sunken active:bg-sunken focus-visible:outline-2 focus-visible:outline-ring"
                     >
-                      {r.paused ? <Play className="size-4" aria-hidden /> : <Pause className="size-4" aria-hidden />}
+                      <span className="sr-only">Edit </span>
+                      {content}
+                      <Pencil className="hidden size-4 shrink-0 text-subtle transition-colors duration-150 group-hover:text-fg sm:block" aria-hidden />
                     </button>
-                  )}
-                  <button type="button" className="icon-btn -mr-2 shrink-0 hover:text-danger" aria-label="Delete recurring entry" onClick={() => setDeleting(r)}>
-                    <Trash2 className="size-4" aria-hidden />
-                  </button>
-                </>
-              ) : (
-                <div className="flex min-w-0 flex-1 items-center gap-3 py-1.5">{content}</div>
-              )}
-            </li>
+                    {/* Ended rules keep an empty slot so amounts and buttons line up across rows. */}
+                    {r.nextDate === null ? (
+                      <span className="hidden size-11 shrink-0 sm:block" aria-hidden />
+                    ) : (
+                      <button
+                        type="button"
+                        className="icon-btn hidden shrink-0 disabled:cursor-not-allowed sm:inline-flex"
+                        aria-label={r.paused ? "Resume" : "Pause"}
+                        title={r.paused ? "Resume" : "Pause"}
+                        disabled={pending}
+                        onClick={() => togglePause(r)}
+                      >
+                        {pending && toggling === r.id ? (
+                          <LoaderCircle className="size-4 animate-spin" aria-hidden />
+                        ) : r.paused ? (
+                          <Play className="size-4" aria-hidden />
+                        ) : (
+                          <Pause className="size-4" aria-hidden />
+                        )}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="icon-btn -mr-2 hidden shrink-0 hover:text-danger active:text-danger sm:inline-flex"
+                      aria-label="Delete recurring entry"
+                      title="Delete"
+                      onClick={() => setDeleting(r)}
+                    >
+                      <Trash2 className="size-4" aria-hidden />
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex min-w-0 flex-1 items-center gap-3 py-1.5">{content}</div>
+                )}
+              </li>
+            </Fragment>
           );
         })}
       </ul>
 
       <Modal open={editing !== null} onClose={closeEdit} title="Edit recurring entry">
-        {editing && <RecurringForm categories={categories} currency={currency} today={today} rule={editing} onDone={closeEdit} />}
+        {editing && (
+          <>
+            <RecurringForm categories={categories} currency={currency} today={today} rule={editing} onDone={closeEdit} />
+            <div className="mt-3 flex flex-col gap-3 border-t border-line pt-3">
+              <FormError message={editError} />
+              <div className="grid grid-cols-2 gap-3">
+                {editing.nextDate !== null && (
+                  <button type="button" className="btn btn-ghost" disabled={pending} onClick={() => togglePause(editing, true)}>
+                    {pending ? (
+                      <LoaderCircle className="size-4 animate-spin" aria-hidden />
+                    ) : editing.paused ? (
+                      <Play className="size-4" aria-hidden />
+                    ) : (
+                      <Pause className="size-4" aria-hidden />
+                    )}
+                    {editing.paused ? "Resume" : "Pause"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={`btn btn-ghost text-danger ${editing.nextDate === null ? "col-span-2" : ""}`}
+                  onClick={() => {
+                    setDeleting(editing);
+                    closeEdit();
+                  }}
+                >
+                  <Trash2 className="size-4" aria-hidden />
+                  Delete
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </Modal>
 
       <Modal open={deleting !== null} onClose={() => setDeleting(null)} title="Delete recurring entry?">

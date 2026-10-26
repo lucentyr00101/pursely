@@ -14,7 +14,7 @@ export const metadata: Metadata = { title: "Recurring" };
 export default function RecurringPage() {
   return (
     <>
-      <Link href="/transactions" className="mb-2 inline-flex items-center gap-1 rounded text-sm font-medium text-muted transition-colors duration-150 hover:text-fg focus-visible:outline-2 focus-visible:outline-ring">
+      <Link href="/transactions" className="-mt-3 -mb-1 inline-flex min-h-11 items-center gap-1 rounded text-sm font-medium text-muted transition-colors duration-150 hover:text-fg focus-visible:outline-2 focus-visible:outline-ring">
         <ChevronLeft className="size-4" aria-hidden />
         Daily log
       </Link>
