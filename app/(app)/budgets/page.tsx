@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { getToday, getLedger } from "@/lib/session";
-import { getBudgetStatus, getSettings } from "@/lib/data";
+import { getBudgetLimit, getBudgetStatus, getSettings } from "@/lib/data";
 import { addMonths, endOf, formatDate, isIsoDate, startOf } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { BudgetForm } from "@/components/budget-row";
@@ -30,9 +30,10 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
   const thisMonth = startOf(today, "month");
   const month = isIsoDate(requested) && requested <= thisMonth ? requested : thisMonth;
 
-  const [rows, { currency }] = await Promise.all([
+  const [rows, { currency }, limit] = await Promise.all([
     getBudgetStatus(ledger.ledgerId, month, endOf(month, "month")),
     getSettings(ledger.ledgerId),
+    getBudgetLimit(ledger.ledgerId),
   ]);
   const canEdit = ledger.role !== "viewer";
   const withBudget = rows.filter((r) => r.budget !== null);
@@ -59,9 +60,24 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
         </Link>
       </div>
 
-      {withBudget.length > 0 && (
+      {(withBudget.length > 0 || limit !== null) && (
         <Card title="All budgeted categories">
-          <BudgetMeter spent={totalSpent} budget={totalBudget} currency={currency} />
+          {withBudget.length > 0 && <BudgetMeter spent={totalSpent} budget={totalBudget} currency={currency} />}
+          {limit !== null && (
+            <p className={`text-sm text-muted ${withBudget.length > 0 ? "mt-3 border-t border-line pt-3" : ""}`}>
+              Budgets can total up to{" "}
+              <Link href="/transactions/recurring" className="tabular font-medium text-fg underline underline-offset-2 hover:text-primary active:text-primary">
+                {formatMoney(limit, currency)}
+              </Link>
+              , your recurring net per month.{" "}
+              <span className={`tabular font-medium ${totalBudget > limit ? "text-danger" : "text-fg"}`}>
+                {totalBudget > limit
+                  ? `${formatMoney(totalBudget - limit, currency)} over`
+                  : `${formatMoney(limit - totalBudget, currency)} unallocated`}
+              </span>
+              .
+            </p>
+          )}
         </Card>
       )}
 
@@ -77,7 +93,7 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
               <div className="min-w-0 flex-1">
                 <div className="flex items-start gap-3">
                   <p className="line-clamp-2 min-w-0 flex-1 pt-2.5 font-medium break-words">{r.name}</p>
-                  <BudgetForm key={`${r.categoryId}-${r.budget}`} categoryId={r.categoryId} name={r.name} budget={r.budget} currency={currency} canEdit={canEdit} />
+                  <BudgetForm key={`${r.categoryId}-${r.budget}`} categoryId={r.categoryId} name={r.name} budget={r.budget} currency={currency} canEdit={canEdit} max={limit === null ? null : Math.max(0, limit - (totalBudget - (r.budget ?? 0)))} />
                 </div>
                 {r.budget !== null ? (
                   <div className="mt-2">

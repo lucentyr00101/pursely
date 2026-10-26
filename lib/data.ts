@@ -3,8 +3,8 @@ import { ObjectId, type AnyBulkWriteOperation, type ClientSession, type Filter }
 import { db } from "./db";
 import { SYSTEM_CATEGORIES, type IconKey, type TxType } from "./category-defs";
 import { buckets, startOf, toIso, toUtc, type Granularity, type Range } from "./dates";
-import { DEFAULT_CURRENCY } from "./money";
-import { occurrence } from "./recurring";
+import { DEFAULT_CURRENCY, formatMoney } from "./money";
+import { monthlyTotals, occurrence } from "./recurring";
 
 // ---------- Documents ----------
 
@@ -953,9 +953,29 @@ export async function getBudgetStatus(ledgerId: string, monthStart: string, mont
     }));
 }
 
+/**
+ * The most all budgets may add up to: the recurring net per month (recurring income minus recurring
+ * expenses). Null, meaning no cap, when no recurring income is set up.
+ */
+export async function getBudgetLimit(ledgerId: string): Promise<number | null> {
+  const { income, net } = monthlyTotals(await listRecurring(ledgerId));
+  return income > 0 ? Math.max(0, net) : null;
+}
+
 export async function setBudget(ledgerId: string, categoryId: string, amount: number | null): Promise<string | null> {
   const cat = await findUsableCategory(ledgerId, categoryId);
   if (!cat || cat.type !== "expense" || cat.parentId) return "Budgets apply to top-level expense categories.";
+  if (amount !== null) {
+    const [limit, docs] = await Promise.all([getBudgetLimit(ledgerId), budgets.find({ ledgerId }).toArray()]);
+    const current = docs.find((b) => b.categoryId.equals(cat._id))?.amount ?? 0;
+    const others = docs.reduce((sum, b) => sum + (b.categoryId.equals(cat._id) ? 0 : b.amount), 0);
+    // Lowering a budget is always allowed, so a ledger already over its limit can work back under it.
+    if (limit !== null && amount > current && others + amount > limit) {
+      const { currency } = await getSettings(ledgerId);
+      const room = Math.max(0, limit - others);
+      return `Budgets can total at most ${formatMoney(limit, currency)}, your recurring net per month. ${formatMoney(room, currency)} is left for this one.`;
+    }
+  }
   if (amount === null) {
     await budgets.deleteOne({ ledgerId, categoryId: cat._id });
   } else {

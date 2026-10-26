@@ -5,7 +5,7 @@ import { ChevronLeft, Repeat } from "lucide-react";
 import { getLedger, getToday } from "@/lib/session";
 import { getSettings, listCategories, listRecurring } from "@/lib/data";
 import { formatMoney } from "@/lib/money";
-import { perMonth } from "@/lib/recurring";
+import { monthlyTotals } from "@/lib/recurring";
 import { AddRecurringButton, RecurringList } from "@/components/recurring-manager";
 import { Card, EmptyState, PageHeader, Skeleton, Stat } from "@/components/ui";
 
@@ -35,11 +35,7 @@ async function Rules() {
   const { currency } = settings;
   const canEdit = ledger.role !== "viewer";
 
-  const monthly = { expense: 0, income: 0 };
-  for (const r of rules) {
-    if (!r.paused && r.nextDate !== null) monthly[r.type] += r.amount * perMonth(r.unit, r.every);
-  }
-  const net = Math.round(monthly.income - monthly.expense);
+  const { net, ...monthly } = monthlyTotals(rules);
 
   return (
     <>
@@ -51,8 +47,8 @@ async function Rules() {
 
       {rules.length > 0 && (
         <div className="mb-6 grid gap-2 sm:grid-cols-3 sm:gap-3">
-          <Stat label="Out per month" value={`≈ ${formatMoney(Math.round(monthly.expense), currency)}`} />
-          <Stat label="In per month" value={`≈ ${formatMoney(Math.round(monthly.income), currency)}`} />
+          <Stat label="Out per month" value={`≈ ${formatMoney(monthly.expense, currency)}`} />
+          <Stat label="In per month" value={`≈ ${formatMoney(monthly.income, currency)}`} />
           <Stat label="Net per month" value={`≈ ${formatMoney(net, currency)}`} tone={net < 0 ? "danger" : "success"} />
         </div>
       )}

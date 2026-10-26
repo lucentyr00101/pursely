@@ -63,3 +63,14 @@ export function perMonth(unit: Granularity, every: number): number {
   const perUnit = { day: 365.25 / 12, week: 365.25 / 12 / 7, month: 1, year: 1 / 12 }[unit];
   return perUnit / every;
 }
+
+/** Rough monthly totals of the rules still running (not paused or finished), in cents. */
+export function monthlyTotals(rules: { type: "expense" | "income"; amount: number; unit: Granularity; every: number; paused: boolean; nextDate: string | null }[]) {
+  const totals = { expense: 0, income: 0 };
+  for (const r of rules) {
+    if (!r.paused && r.nextDate !== null) totals[r.type] += r.amount * perMonth(r.unit, r.every);
+  }
+  const expense = Math.round(totals.expense);
+  const income = Math.round(totals.income);
+  return { expense, income, net: income - expense };
+}

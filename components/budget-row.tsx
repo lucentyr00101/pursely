@@ -1,22 +1,27 @@
 "use client";
 
-import { useActionState, useRef } from "react";
+import { useActionState, useRef, useState } from "react";
 import { Check, LoaderCircle } from "lucide-react";
 import { saveBudget, type ActionState } from "@/app/actions";
-import { centsToInput } from "@/lib/money";
+import { centsToInput, formatMoney, parseAmount } from "@/lib/money";
 
 /**
  * Saves on Enter or when the field loses focus, so a row needs no Save button and the name keeps
  * its width on phones. iOS's decimal keypad has no Enter key, so blur is how it saves there.
+ * `max` is the most this budget can be under the recurring-net limit (null: no limit). It is checked
+ * here for instant feedback; `saveBudget` enforces it.
  */
-export function BudgetForm({ categoryId, name, budget, currency, canEdit }: {
+export function BudgetForm({ categoryId, name, budget, currency, canEdit, max }: {
   categoryId: string;
   name: string;
   budget: number | null;
   currency: string;
   canEdit: boolean;
+  max: number | null;
 }) {
   const [state, action, pending] = useActionState<ActionState, FormData>(saveBudget, { ok: false });
+  const [localError, setLocalError] = useState<string | null>(null);
+  const error = localError ?? state.error;
   const id = `budget-${categoryId}`;
   const initial = budget ? centsToInput(budget) : "";
   // The last value sent (or loaded), so leaving an unchanged field doesn't save again.
@@ -38,11 +43,18 @@ export function BudgetForm({ categoryId, name, budget, currency, canEdit }: {
           placeholder="No limit"
           disabled={!canEdit}
           defaultValue={initial}
-          aria-describedby={state.error ? `${id}-error` : undefined}
-          aria-invalid={state.error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : undefined}
+          aria-invalid={error ? true : undefined}
+          onChange={() => setLocalError(null)}
           onBlur={(e) => {
             const value = e.currentTarget.value.trim();
             if (value === saved.current) return;
+            const cents = value ? parseAmount(value) : null;
+            // Lowering is always allowed, matching the server, so an over-limit ledger can recover.
+            if (max !== null && cents !== null && cents > (budget ?? 0) && cents > max) {
+              setLocalError(`Over your recurring net per month. At most ${formatMoney(max, currency)} is left for this one.`);
+              return;
+            }
             saved.current = value;
             e.currentTarget.form?.requestSubmit();
           }}
@@ -58,14 +70,14 @@ export function BudgetForm({ categoryId, name, budget, currency, canEdit }: {
         <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center" role="status">
           {pending ? (
             <LoaderCircle className="size-4 animate-spin text-subtle" aria-label="Saving" />
-          ) : state.ok ? (
+          ) : state.ok && !localError ? (
             <Check className="size-4 text-success" aria-label="Saved" />
           ) : null}
         </span>
       </div>
-      {state.error && (
+      {error && (
         <p id={`${id}-error`} role="alert" className="max-w-44 text-right text-xs text-danger">
-          {state.error}
+          {error}
         </p>
       )}
     </form>
