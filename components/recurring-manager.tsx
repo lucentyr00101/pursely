@@ -9,7 +9,9 @@ import { formatDate, GRANULARITIES, type Granularity } from "@/lib/dates";
 import { centsToInput, formatMoney } from "@/lib/money";
 import { describeSchedule, MAX_EVERY, perMonth, remaining } from "@/lib/recurring";
 import { CategoryIcon } from "./category-icon";
+import { DatePicker } from "./date-picker";
 import { Modal } from "./modal";
+import { Select } from "./select";
 import { CategorySelect, TypeToggle } from "./transaction-form";
 import { buildLookup } from "./transaction-list";
 import { FormError } from "./ui";
@@ -117,13 +119,12 @@ export function RecurringList({ rules, categories, currency, canEdit, today }: {
           <label htmlFor="rc-sort" className="text-sm font-medium text-muted">
             Sort by
           </label>
-          <select id="rc-sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="field w-auto cursor-pointer">
-            {Object.entries(SORTS).map(([value, name]) => (
-              <option key={value} value={value}>
-                {name}
-              </option>
-            ))}
-          </select>
+          <Select
+            id="rc-sort"
+            options={(Object.entries(SORTS) as [Sort, string][]).map(([value, label]) => ({ value, label }))}
+            value={sort}
+            onChange={setSort}
+          />
         </div>
       )}
       <FormError message={error} />
@@ -329,13 +330,12 @@ function RecurringForm({ categories, currency, today, rule, onDone }: {
             onChange={(e) => setEvery(e.target.value)}
             className="field tabular text-center"
           />
-          <select name="unit" aria-label="Unit" defaultValue={rule?.unit ?? "month"} className="field cursor-pointer">
-            {GRANULARITIES.map((u) => (
-              <option key={u} value={u}>
-                {UNIT_LABELS[u][plural ? 1 : 0]}
-              </option>
-            ))}
-          </select>
+          <Select
+            name="unit"
+            aria-label="Unit"
+            options={GRANULARITIES.map((u) => ({ value: u, label: UNIT_LABELS[u][plural ? 1 : 0] }))}
+            defaultValue={rule?.unit ?? "month"}
+          />
         </div>
       </fieldset>
 
@@ -344,21 +344,19 @@ function RecurringForm({ categories, currency, today, rule, onDone }: {
           <label htmlFor="rc-start" className="label">
             {rule ? "Next on" : "Starts"}
           </label>
-          <input
+          <DatePicker
             id="rc-start"
             name="start"
-            type="date"
             required
             defaultValue={rule ? (rule.nextDate ?? today) : today}
             aria-describedby={rule ? "rc-start-hint" : undefined}
-            className="field"
           />
         </div>
         <div className="min-w-0">
           <label htmlFor="rc-end" className="label">
             Ends <span className="font-normal text-subtle">(optional)</span>
           </label>
-          <input id="rc-end" name="end" type="date" defaultValue={rule?.endDate ?? ""} className="field" />
+          <DatePicker id="rc-end" name="end" defaultValue={rule?.endDate ?? ""} placeholder="Never" />
         </div>
       </div>
       {rule && (

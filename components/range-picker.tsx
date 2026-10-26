@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, LoaderCircle } from "lucide-react";
 import type { Granularity, Preset, Range } from "@/lib/dates";
 import { setDashboardHref } from "./dashboard-href";
+import { DatePicker } from "./date-picker";
+import { Select } from "./select";
 
 const PRESETS: { value: Preset; label: string }[] = [
   { value: "today", label: "Day" },
@@ -74,20 +76,12 @@ export function RangePicker({ range, groupParam, today }: { range: Range; groupP
     <div className="glass flex flex-col gap-3 rounded-2xl p-3 sm:p-4">
       {/* Phones get two side-by-side dropdowns; six segmented buttons don't fit one row there. */}
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-        <label className="flex flex-col gap-1 text-xs text-muted sm:hidden">
-          Range
-          <select
-            value={preset}
-            onChange={(e) => pickPreset(e.target.value as Preset)}
-            className="field h-11 cursor-pointer py-0 text-sm"
-          >
-            {PRESETS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex flex-col gap-1 sm:hidden">
+          <label htmlFor="rp-range" className="text-xs text-muted">
+            Range
+          </label>
+          <Select id="rp-range" options={PRESETS} value={preset} onChange={pickPreset} size="sm" />
+        </div>
 
         <div role="group" aria-label="Time range" className="hidden flex-wrap gap-1 rounded-lg bg-sunken p-1 sm:flex">
           {PRESETS.map((p) => (
@@ -105,20 +99,18 @@ export function RangePicker({ range, groupParam, today }: { range: Range; groupP
           ))}
         </div>
 
-        <label className="flex flex-col gap-1 text-xs text-muted sm:ml-auto sm:flex-row sm:items-center sm:gap-2 sm:text-sm">
-          Group by
-          <select
-            value={groupParam ?? ""}
-            onChange={(e) => go({ ...current, group: e.target.value || undefined })}
-            className="field h-11 cursor-pointer py-0 text-sm sm:h-9 sm:w-auto"
-          >
-            {GROUPS.map((g) => (
-              <option key={g.value} value={g.value}>
-                {g.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex flex-col gap-1 sm:ml-auto sm:flex-row sm:items-center sm:gap-2">
+          <label htmlFor="rp-group" className="text-xs text-muted sm:text-sm">
+            Group by
+          </label>
+          <Select
+            id="rp-group"
+            options={GROUPS}
+            value={(groupParam ?? "") as "" | Granularity}
+            onChange={(group) => go({ ...current, group: group || undefined })}
+            size="sm"
+          />
+        </div>
       </div>
 
       {preset === "last" && (
@@ -140,18 +132,7 @@ export function RangePicker({ range, groupParam, today }: { range: Range; groupP
             onChange={(e) => setN(e.target.value)}
             className="field tabular h-11 w-20 text-sm sm:h-9"
           />
-          <select
-            aria-label="Period"
-            value={unit}
-            onChange={(e) => setUnit(e.target.value as Granularity)}
-            className="field h-11 w-auto cursor-pointer py-0 text-sm sm:h-9"
-          >
-            {UNITS.map((u) => (
-              <option key={u.value} value={u.value}>
-                {u.label}
-              </option>
-            ))}
-          </select>
+          <Select aria-label="Period" options={UNITS} value={unit} onChange={setUnit} size="sm" />
           <button type="submit" className="btn btn-primary h-11 sm:h-9">
             Apply
           </button>
@@ -166,14 +147,18 @@ export function RangePicker({ range, groupParam, today }: { range: Range; groupP
             go({ preset: "custom", from, to });
           }}
         >
-          <label className="min-w-0 text-xs text-muted sm:text-sm">
-            From
-            <input type="date" required value={from} max={to} onChange={(e) => setFrom(e.target.value)} className="field mt-1 h-11 px-2 text-sm sm:h-9 sm:px-3" />
-          </label>
-          <label className="min-w-0 text-xs text-muted sm:text-sm">
-            To
-            <input type="date" required value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} className="field mt-1 h-11 px-2 text-sm sm:h-9 sm:px-3" />
-          </label>
+          <div className="flex min-w-0 flex-col gap-1">
+            <label htmlFor="rp-from" className="text-xs text-muted sm:text-sm">
+              From
+            </label>
+            <DatePicker id="rp-from" required value={from} max={to} onChange={setFrom} size="sm" />
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <label htmlFor="rp-to" className="text-xs text-muted sm:text-sm">
+              To
+            </label>
+            <DatePicker id="rp-to" required value={to} min={from} max={today} onChange={setTo} size="sm" />
+          </div>
           <button type="submit" className="btn btn-primary col-span-2 h-11 sm:h-9">
             Apply
           </button>

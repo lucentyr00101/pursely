@@ -16,16 +16,16 @@ export const ICONS: Record<IconKey, LucideIcon> = {
   wallet: Wallet, landmark: Landmark, banknote: Banknote, tag: Tag, more: CircleEllipsis,
 };
 
-export function CategoryIcon({ icon, color, size = "md" }: { icon: IconKey; color: string; size?: "sm" | "md" }) {
+export function CategoryIcon({ icon, color, size = "md" }: { icon: IconKey; color: string; size?: "xs" | "sm" | "md" }) {
   const Icon = ICONS[icon] ?? Tag;
-  const box = size === "sm" ? "size-8 rounded-md" : "size-10 rounded-lg";
+  const box = size === "xs" ? "size-6 rounded-md" : size === "sm" ? "size-8 rounded-md" : "size-10 rounded-lg";
   return (
     <span
       aria-hidden
       className={`inline-flex shrink-0 items-center justify-center ${box}`}
       style={{ backgroundColor: `${color}26`, color }}
     >
-      <Icon className={size === "sm" ? "size-4" : "size-5"} strokeWidth={2} />
+      <Icon className={size === "md" ? "size-5" : size === "sm" ? "size-4" : "size-3.5"} strokeWidth={2} />
     </span>
   );
 }

@@ -13,12 +13,17 @@ import {
 } from "@/app/actions";
 import type { Household, Member, OutgoingInvite, Role } from "@/lib/household";
 import { Modal } from "./modal";
+import { Select, type SelectOption } from "./select";
 import { FormError } from "./ui";
 
 type InviteRole = OutgoingInvite["role"];
 type Dialog = { kind: "remove" | "transfer"; member: Member } | { kind: "leave" };
 
 const ROLE_LABEL: Record<Role, string> = { owner: "Owner", editor: "Editor", viewer: "Viewer" };
+const ROLE_OPTIONS: SelectOption<InviteRole>[] = [
+  { value: "editor", label: ROLE_LABEL.editor },
+  { value: "viewer", label: ROLE_LABEL.viewer },
+];
 
 export function HouseholdCard({ household, invites, viewerId, role }: {
   household: Household | null;
@@ -123,21 +128,18 @@ function MemberRow({ member, isViewer, canManage, onDialog, onError }: {
       </div>
       {canManage && (
         <div className="flex flex-wrap items-center gap-2">
-          <select
+          <Select
             aria-label={`Role for ${name}`}
-            value={member.role}
+            options={ROLE_OPTIONS}
+            value={member.role as InviteRole}
             disabled={pending}
-            className="field w-auto cursor-pointer"
-            onChange={(e) =>
+            onChange={(role) =>
               start(async () => {
-                const result = await changeMemberRole(member.userId, e.target.value as InviteRole);
+                const result = await changeMemberRole(member.userId, role);
                 onError(result.ok ? undefined : result.error);
               })
             }
-          >
-            <option value="editor">Editor</option>
-            <option value="viewer">Viewer</option>
-          </select>
+          />
           <button type="button" className="btn btn-ghost" onClick={() => onDialog({ kind: "transfer", member })}>
             Make owner
           </button>
@@ -170,10 +172,7 @@ function InviteForm() {
           <label htmlFor="invite-role" className="label">
             Role
           </label>
-          <select id="invite-role" name="role" defaultValue="editor" className="field cursor-pointer sm:w-auto">
-            <option value="editor">Editor</option>
-            <option value="viewer">Viewer</option>
-          </select>
+          <Select id="invite-role" name="role" options={ROLE_OPTIONS} defaultValue="editor" />
         </div>
         <button type="submit" disabled={pending} className="btn btn-primary">
           {pending ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <Mail className="size-4" aria-hidden />}

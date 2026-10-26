@@ -4,7 +4,11 @@ import { useActionState } from "react";
 import { Check, Download, LoaderCircle } from "lucide-react";
 import { saveSettings, type ActionState } from "@/app/actions";
 import { CURRENCIES } from "@/lib/money";
+import { DatePicker } from "./date-picker";
+import { Select } from "./select";
 import { FormError } from "./ui";
+
+const CURRENCY_OPTIONS = CURRENCIES.map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` }));
 
 export function CurrencyForm({ currency, canEdit }: { currency: string; canEdit: boolean }) {
   const [state, action, pending] = useActionState<ActionState, FormData>(saveSettings, { ok: false });
@@ -15,13 +19,14 @@ export function CurrencyForm({ currency, canEdit }: { currency: string; canEdit:
           Display currency
         </label>
         <div className="flex gap-2">
-          <select id="currency" name="currency" defaultValue={currency} disabled={!canEdit} className="field min-w-0 flex-1 cursor-pointer sm:max-w-xs">
-            {CURRENCIES.map((c) => (
-              <option key={c.code} value={c.code}>
-                {c.code} — {c.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            id="currency"
+            name="currency"
+            options={CURRENCY_OPTIONS}
+            defaultValue={currency}
+            disabled={!canEdit}
+            className="flex-1 sm:max-w-xs"
+          />
           <button type="submit" disabled={pending || !canEdit} className="btn btn-primary">
             {pending && <LoaderCircle className="size-4 animate-spin" aria-hidden />}
             Save
@@ -47,13 +52,13 @@ export function ExportForm({ from, to }: { from: string; to: string }) {
         <label htmlFor="export-from" className="label">
           From
         </label>
-        <input id="export-from" name="from" type="date" required defaultValue={from} className="field" />
+        <DatePicker id="export-from" name="from" required defaultValue={from} />
       </div>
       <div className="min-w-0">
         <label htmlFor="export-to" className="label">
           To
         </label>
-        <input id="export-to" name="to" type="date" required defaultValue={to} className="field" />
+        <DatePicker id="export-to" name="to" required defaultValue={to} />
       </div>
       <button type="submit" className="btn btn-ghost col-span-2">
         <Download className="size-4" aria-hidden />

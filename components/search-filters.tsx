@@ -3,8 +3,12 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { LoaderCircle, Search, SlidersHorizontal, X } from "lucide-react";
+import type { TxType } from "@/lib/category-defs";
 import type { CategoryNode } from "@/lib/data";
 import { parseAmount } from "@/lib/money";
+import { DatePicker } from "./date-picker";
+import { Select } from "./select";
+import { categoryOptions } from "./transaction-form";
 
 export type SearchValues = {
   q: string;
@@ -18,6 +22,12 @@ export type SearchValues = {
 };
 
 const EMPTY: SearchValues = { q: "", type: "", category: "", member: "", min: "", max: "", from: "", to: "" };
+
+const TYPE_OPTIONS = [
+  { value: "", label: "All" },
+  { value: "expense", label: "Expenses" },
+  { value: "income", label: "Income" },
+];
 
 // Typing waits this long before searching, so each keystroke doesn't fire a query.
 const DEBOUNCE_MS = 300;
@@ -54,7 +64,7 @@ export function SearchFilters({ initial, categories, members, currency, today }:
     else go();
   }
 
-  const options = categories.filter((c) => !values.type || c.type === values.type);
+  const options = [{ value: "", label: "All" }, ...categoryOptions(categories, (values.type || undefined) as TxType | undefined)];
 
   return (
     <div className="glass mb-6 flex flex-col gap-3 rounded-2xl p-3 sm:p-4">
@@ -100,45 +110,23 @@ export function SearchFilters({ initial, categories, members, currency, today }:
             <label htmlFor="sf-type" className="label">
               Type
             </label>
-            <select
+            <Select
               id="sf-type"
+              options={TYPE_OPTIONS}
               value={values.type}
-              onChange={(e) => {
-                const type = e.target.value;
+              onChange={(type) => {
                 // A category of the other type can never match, so drop it.
                 const keep = !type || categories.some((c) => c.type === type && (c.id === values.category || c.children.some((s) => s.id === values.category)));
                 update({ type, ...(!keep && { category: "" }) });
               }}
-              className="field cursor-pointer"
-            >
-              <option value="">All</option>
-              <option value="expense">Expenses</option>
-              <option value="income">Income</option>
-            </select>
+            />
           </div>
 
           <div>
             <label htmlFor="sf-category" className="label">
               Category
             </label>
-            <select
-              id="sf-category"
-              value={values.category}
-              onChange={(e) => update({ category: e.target.value })}
-              className="field cursor-pointer"
-            >
-              <option value="">All</option>
-              {options.map((c) => (
-                <optgroup key={c.id} label={c.name}>
-                  <option value={c.id}>{c.name}</option>
-                  {c.children.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {c.name} › {s.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+            <Select id="sf-category" options={options} value={values.category} onChange={(category) => update({ category })} />
           </div>
 
           <div>
@@ -189,28 +177,20 @@ export function SearchFilters({ initial, categories, members, currency, today }:
             <label htmlFor="sf-from" className="label">
               From
             </label>
-            <input
-              id="sf-from"
-              type="date"
-              value={values.from}
-              max={values.to || today}
-              onChange={(e) => update({ from: e.target.value })}
-              className="field cursor-pointer"
-            />
+            <DatePicker id="sf-from" value={values.from} max={values.to || today} onChange={(from) => update({ from })} placeholder="Any" />
           </div>
 
           <div>
             <label htmlFor="sf-to" className="label">
               To
             </label>
-            <input
+            <DatePicker
               id="sf-to"
-              type="date"
               value={values.to}
               min={values.from || undefined}
               max={today}
-              onChange={(e) => update({ to: e.target.value })}
-              className="field cursor-pointer"
+              onChange={(to) => update({ to })}
+              placeholder="Any"
             />
           </div>
 
@@ -219,19 +199,12 @@ export function SearchFilters({ initial, categories, members, currency, today }:
               <label htmlFor="sf-member" className="label">
                 Added by
               </label>
-              <select
+              <Select
                 id="sf-member"
+                options={[{ value: "", label: "Anyone" }, ...members.map((m) => ({ value: m.userId, label: m.name }))]}
                 value={values.member}
-                onChange={(e) => update({ member: e.target.value })}
-                className="field cursor-pointer"
-              >
-                <option value="">Anyone</option>
-                {members.map((m) => (
-                  <option key={m.userId} value={m.userId}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
+                onChange={(member) => update({ member })}
+              />
             </div>
           )}
 

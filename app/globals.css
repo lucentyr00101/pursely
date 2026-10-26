@@ -8,6 +8,7 @@
   --bg-glow-2: rgba(126, 34, 206, 0.07);
   --surface: rgba(255, 255, 255, 0.8);
   --surface-strong: rgba(255, 255, 255, 0.96);
+  --surface-raised: #fffdfa; /* opaque, for popovers over other content */
   --surface-sunken: rgba(87, 52, 20, 0.05);
   --border: rgba(87, 52, 20, 0.1);
   --border-strong: rgba(87, 52, 20, 0.18);
@@ -41,6 +42,7 @@
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-strong: var(--surface-strong);
+  --color-raised: var(--surface-raised);
   --color-sunken: var(--surface-sunken);
   --color-line: var(--border);
   --color-line-strong: var(--border-strong);
@@ -95,17 +97,57 @@ body {
     @apply transition-colors duration-150 focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40;
   }
 
-  /* iOS Safari sizes native date inputs to their content and ignores width, overflowing flex rows. */
-  /* appearance: none also drops iOS's vertical centering, so flex restores it (justify-* sets the horizontal side). */
-  input.field[type="date"] {
-    appearance: none;
-    min-width: 0;
-    display: flex;
-    align-items: center;
+  /* Select and DatePicker popovers (components/popover.tsx places them). Phones get a bottom sheet. */
+  .popover {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    max-width: calc(100vw - 1rem);
+    overflow: auto;
+    overscroll-behavior: contain;
+    @apply rounded-xl border border-line bg-raised p-1 text-fg shadow-xl;
+    transition:
+      opacity 150ms ease-out,
+      transform 150ms ease-out,
+      overlay 150ms allow-discrete,
+      display 150ms allow-discrete;
   }
-  input.field[type="date"]::-webkit-date-and-time-value {
-    min-height: 1.5em;
-    text-align: inherit;
+  .popover:not(:popover-open) {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  @starting-style {
+    .popover:popover-open {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+  }
+  .popover::backdrop {
+    background: transparent;
+  }
+  @media (max-width: 639px) {
+    .popover {
+      inset: auto 0 0 0;
+      width: 100%;
+      max-width: none;
+      max-height: 75dvh;
+      border-radius: 1rem 1rem 0 0;
+      padding: 0.5rem max(0.5rem, env(safe-area-inset-right)) calc(0.5rem + env(safe-area-inset-bottom))
+        max(0.5rem, env(safe-area-inset-left));
+      transition-duration: 220ms;
+    }
+    .popover:not(:popover-open) {
+      transform: translateY(100%);
+    }
+    @starting-style {
+      .popover:popover-open {
+        opacity: 0;
+        transform: translateY(100%);
+      }
+    }
+    .popover::backdrop {
+      background: rgba(41, 26, 12, 0.4);
+    }
   }
 
   .label {
