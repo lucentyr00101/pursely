@@ -1,4 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["hkg1"]
+  "regions": ["hkg1"],
+  "functions": {
+    "app/api/insight/route.ts": {
+      "regions": ["sin1"]
+    }
+  }
 }

@@ -165,6 +165,7 @@ export async function generateOverview(ledgerId: string, today: string, currency
   });
 
   let limited = false;
+  let rejected = false;
   for (const model of MODELS) {
     const res = await fetch(endpoint(model), {
       method: "POST",
@@ -180,7 +181,11 @@ export async function generateOverview(ledgerId: string, today: string, currency
       // Quotas are per model, so another one may still have room.
       if (res.status === 429) limited = true;
       console.error(`Gemini ${model} error`, res.status, (await res.text().catch(() => "")).slice(0, 500));
-      if (res.status === 400 || res.status === 401 || res.status === 403) break; // the key or request is wrong
+      // The key, the request or the server's location is refused; another model won't help.
+      if (res.status === 400 || res.status === 401 || res.status === 403) {
+        rejected = true;
+        break;
+      }
       continue;
     }
     const json = await res.json();
@@ -189,6 +194,7 @@ export async function generateOverview(ledgerId: string, today: string, currency
     if (parsed.success) return parsed.data;
     console.error(`Unexpected Gemini ${model} response`, JSON.stringify(json).slice(0, 2000));
   }
+  if (rejected) throw new GeminiError("Gemini turned the request down. The server logs say why.");
   throw new GeminiError(
     limited ? "Gemini's free daily limit is used up. Try again later." : "Gemini is busy right now. Try again in a few minutes.",
   );

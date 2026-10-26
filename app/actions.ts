@@ -10,7 +10,6 @@ import { CATEGORY_COLORS, ICON_KEYS } from "@/lib/category-defs";
 import { GRANULARITIES, isIsoDate, startOf } from "@/lib/dates";
 import { MAX_EVERY } from "@/lib/recurring";
 import { isCurrency, parseAmount } from "@/lib/money";
-import { GeminiError, generateOverview, geminiEnabled } from "@/lib/gemini";
 
 export type ActionState = { ok: boolean; error?: string; at?: number };
 
@@ -294,34 +293,4 @@ export async function respondToInvite(
   }
   const error = await household.acceptInvite(ctx, session.user.email, inviteId, parsed.data);
   return error ? fail(error) : done();
-}
-
-// ---------- AI overview ----------
-
-/** The free Gemini tier allows few requests a day, so a ledger can ask at most this often. */
-const INSIGHT_COOLDOWN_MS = 10 * 60_000;
-
-export type InsightState = { ok: boolean; error?: string; insight?: data.Insight };
-
-/** Any member, viewers included, may ask: it only reads the ledger. */
-export async function generateInsight(): Promise<InsightState> {
-  const ctx = await getLedgerContext();
-  if (!ctx) return { ok: false, error: "Your session expired. Sign in again." };
-  if (!geminiEnabled()) return { ok: false, error: "The AI overview isn't set up." };
-
-  const previous = await data.getInsight(ctx.ledgerId);
-  const wait = previous ? Date.parse(previous.createdAt) + INSIGHT_COOLDOWN_MS - Date.now() : 0;
-  if (wait > 0) {
-    const minutes = Math.ceil(wait / 60_000);
-    return { ok: false, error: `The overview was just updated. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.` };
-  }
-
-  try {
-    const [today, settings] = await Promise.all([getToday(), data.getSettings(ctx.ledgerId)]);
-    const overview = await generateOverview(ctx.ledgerId, today, settings.currency);
-    return { ok: true, insight: await data.saveInsight(ctx.ledgerId, overview) };
-  } catch (error) {
-    if (error instanceof GeminiError) return { ok: false, error: error.message };
-    throw error;
-  }
 }

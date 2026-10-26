@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { CalendarClock, ChevronDown, RefreshCw, Sparkles } from "lucide-react";
-import { generateInsight, type InsightState } from "@/app/actions";
+import type { InsightState } from "@/app/api/insight/route";
 import type { Insight } from "@/lib/data";
 import { FormError } from "./ui";
 
@@ -23,6 +23,18 @@ function fromEarlierMonth(iso: string): boolean {
   const then = new Date(iso);
   const now = new Date();
   return then.getFullYear() * 12 + then.getMonth() < now.getFullYear() * 12 + now.getMonth();
+}
+
+/** Runs in its own region (see app/api/insight/route.ts), so it's a fetch rather than a Server Action. */
+async function generateInsight(previous: InsightState): Promise<InsightState> {
+  try {
+    const res = await fetch("/api/insight", { method: "POST" });
+    const state: InsightState = await res.json();
+    // Keep the last overview on screen under the error.
+    return state.ok ? state : { ...state, insight: previous.insight };
+  } catch {
+    return { ok: false, error: "Couldn't reach the server. Check your connection and try again.", insight: previous.insight };
+  }
 }
 
 export function InsightCard({ initial }: { initial: Insight | null }) {
