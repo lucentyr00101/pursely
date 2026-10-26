@@ -2,7 +2,7 @@ import "server-only";
 import { ObjectId, type AnyBulkWriteOperation, type ClientSession, type Filter } from "mongodb";
 import { db } from "./db";
 import { SYSTEM_CATEGORIES, type IconKey, type TxType } from "./category-defs";
-import { buckets, startOf, toIso, toUtc, type Granularity, type Range } from "./dates";
+import { addMonths, buckets, startOf, toIso, toUtc, type Granularity, type Range } from "./dates";
 import { DEFAULT_CURRENCY, formatMoney } from "./money";
 import { monthlyTotals, occurrence } from "./recurring";
 
@@ -57,7 +57,12 @@ type RecurringDoc = {
   updatedAt: Date;
 };
 
-type BudgetDoc = { _id: ObjectId; ledgerId: string; categoryId: ObjectId; amount: number };
+/**
+ * A budget applies from the month `from` (YYYY-MM-01) until a later entry for the same category takes
+ * over, so changing it never rewrites past months. `from: null` (or missing, on budgets set before
+ * per-month history) applies to every month. A null amount ends the budget.
+ */
+type BudgetDoc = { _id: ObjectId; ledgerId: string; categoryId: ObjectId; from?: string | null; amount: number | null };
 type SettingsDoc = { _id: string; currency: string }; // _id = ledgerId
 
 const categories = db.collection<CategoryDoc>("categories");
@@ -88,6 +93,8 @@ export function ensureSetup(): Promise<void> {
           [legacy.categories, "userId_1_type_1"],
           [legacy.transactions, "userId_1_date_-1"],
           [legacy.budgets, "userId_1_categoryId_1"],
+          // Replaced by {ledgerId, categoryId, from}, which allows one entry per month.
+          [legacy.budgets, "ledgerId_1_categoryId_1"],
         ] as const
       ).map(([collection, name]) =>
         collection.dropIndex(name).catch((error) => {
@@ -129,7 +136,13 @@ export function ensureSetup(): Promise<void> {
     const twins = await legacy.budgets
       .aggregate<{ ids: ObjectId[] }>([
         { $match: { ledgerId: { $type: "string" } } },
-        { $group: { _id: { ledgerId: "$ledgerId", categoryId: "$categoryId" }, ids: { $push: "$_id" }, n: { $sum: 1 } } },
+        {
+          $group: {
+            _id: { ledgerId: "$ledgerId", categoryId: "$categoryId", from: { $ifNull: ["$from", null] } },
+            ids: { $push: "$_id" },
+            n: { $sum: 1 },
+          },
+        },
         { $match: { n: { $gt: 1 } } },
       ])
       .toArray();
@@ -142,7 +155,7 @@ export function ensureSetup(): Promise<void> {
       categories.createIndex({ ledgerId: 1, type: 1 }),
       categories.createIndex({ key: 1 }, { unique: true, partialFilterExpression: { key: { $type: "string" } } }),
       transactions.createIndex({ ledgerId: 1, date: -1 }),
-      budgets.createIndex({ ledgerId: 1, categoryId: 1 }, { unique: true }),
+      budgets.createIndex({ ledgerId: 1, categoryId: 1, from: 1 }, { unique: true }),
       recurring.createIndex({ ledgerId: 1, nextDate: 1 }),
       // One entry per rule per day, so two requests generating the same occurrence can't both insert it.
       transactions.createIndex(
@@ -331,7 +344,7 @@ export async function archiveCategory(ledgerId: string, id: string): Promise<str
     { ledgerId, $or: [{ _id: doc._id }, { parentId: doc._id }] },
     { $set: { archivedAt: now } },
   );
-  await budgets.deleteMany({ ledgerId, categoryId: doc._id });
+  // Its budgets stay, so past months still show them.
   // Recurring entries in it stop until someone picks a new category.
   await recurring.updateMany(
     { ledgerId, pausedAt: null, $or: [{ categoryId: doc._id }, { subcategoryId: doc._id }] },
@@ -925,12 +938,44 @@ export type BudgetStatus = {
   color: string;
   budget: number | null;
   spent: number;
+  archived: boolean;
 };
 
-/** Every top-level expense category with its monthly budget (if any) and spend for the month. */
-export async function getBudgetStatus(ledgerId: string, monthStart: string, monthEnd: string): Promise<BudgetStatus[]> {
+/** Each category's budget for `month` (YYYY-MM-01): its latest entry starting on or before it. */
+function budgetsFor(docs: BudgetDoc[], month: string): Map<string, number> {
+  const latest = new Map<string, BudgetDoc>();
+  for (const b of docs) {
+    const from = b.from ?? "";
+    if (from > month) continue;
+    const id = b.categoryId.toHexString();
+    const seen = latest.get(id);
+    if (!seen || from > (seen.from ?? "")) latest.set(id, b);
+  }
+  return new Map([...latest].flatMap(([id, b]) => (b.amount === null ? [] : [[id, b.amount] as const])));
+}
+
+/**
+ * Every top-level expense category with its budget for the month (if any) and spend. With `past`,
+ * categories archived after the month began are included too, so a past month shows what it had.
+ */
+export async function getBudgetStatus(
+  ledgerId: string,
+  monthStart: string,
+  monthEnd: string,
+  { past = false }: { past?: boolean } = {},
+): Promise<BudgetStatus[]> {
+  await ensureSetup();
   const [cats, budgetDocs, spentRows] = await Promise.all([
-    listCategories(ledgerId),
+    categories
+      .find({
+        $and: [
+          visibleTo(ledgerId),
+          { type: "expense", parentId: null },
+          past ? { $or: [{ archivedAt: null }, { archivedAt: { $gt: toUtc(monthStart) } }] } : { archivedAt: null },
+        ],
+      })
+      .sort({ createdAt: 1, _id: 1 })
+      .toArray(),
     budgets.find({ ledgerId }).toArray(),
     transactions
       .aggregate<{ _id: ObjectId; total: number }>([
@@ -939,18 +984,25 @@ export async function getBudgetStatus(ledgerId: string, monthStart: string, mont
       ])
       .toArray(),
   ]);
-  const budgetBy = new Map(budgetDocs.map((b) => [b.categoryId.toHexString(), b.amount]));
+  const budgetBy = budgetsFor(budgetDocs, monthStart);
   const spentBy = new Map(spentRows.map((r) => [r._id.toHexString(), r.total]));
+  // System categories first, matching listCategories.
+  cats.sort((a, b) => Number(a.ledgerId !== null) - Number(b.ledgerId !== null));
   return cats
-    .filter((c) => c.type === "expense")
-    .map((c) => ({
-      categoryId: c.id,
-      name: c.name,
-      icon: c.icon,
-      color: c.color,
-      budget: budgetBy.get(c.id) ?? null,
-      spent: spentBy.get(c.id) ?? 0,
-    }));
+    .map((doc) => {
+      const c = toCategory(doc);
+      return {
+        categoryId: c.id,
+        name: c.name,
+        icon: c.icon,
+        color: c.color,
+        budget: budgetBy.get(c.id) ?? null,
+        spent: spentBy.get(c.id) ?? 0,
+        archived: c.archived,
+      };
+    })
+    // An archived category only shows in a past month it budgeted or spent in.
+    .filter((r) => !r.archived || r.budget !== null || r.spent > 0);
 }
 
 /**
@@ -962,24 +1014,37 @@ export async function getBudgetLimit(ledgerId: string): Promise<number | null> {
   return income > 0 ? Math.max(0, net) : null;
 }
 
-export async function setBudget(ledgerId: string, categoryId: string, amount: number | null): Promise<string | null> {
+/** Set a category's budget from `month` (YYYY-MM-01) on. Earlier months keep theirs. */
+export async function setBudget(ledgerId: string, categoryId: string, amount: number | null, month: string): Promise<string | null> {
   const cat = await findUsableCategory(ledgerId, categoryId);
   if (!cat || cat.type !== "expense" || cat.parentId) return "Budgets apply to top-level expense categories.";
+  const docs = await budgets.find({ ledgerId }).toArray();
   if (amount !== null) {
-    const [limit, docs] = await Promise.all([getBudgetLimit(ledgerId), budgets.find({ ledgerId }).toArray()]);
-    const current = docs.find((b) => b.categoryId.equals(cat._id))?.amount ?? 0;
-    const others = docs.reduce((sum, b) => sum + (b.categoryId.equals(cat._id) ? 0 : b.amount), 0);
+    const [limit, archived] = await Promise.all([
+      getBudgetLimit(ledgerId),
+      categories.distinct("_id", { ledgerId, archivedAt: { $ne: null } }),
+    ]);
+    const archivedIds = new Set(archived.map((id) => id.toHexString()));
+    const current = budgetsFor(docs, month);
+    const own = cat._id.toHexString();
+    let others = 0;
+    for (const [id, value] of current) if (id !== own && !archivedIds.has(id)) others += value;
     // Lowering a budget is always allowed, so a ledger already over its limit can work back under it.
-    if (limit !== null && amount > current && others + amount > limit) {
+    if (limit !== null && amount > (current.get(own) ?? 0) && others + amount > limit) {
       const { currency } = await getSettings(ledgerId);
       const room = Math.max(0, limit - others);
       return `Budgets can total at most ${formatMoney(limit, currency)}, your recurring net per month. ${formatMoney(room, currency)} is left for this one.`;
     }
   }
-  if (amount === null) {
-    await budgets.deleteOne({ ledgerId, categoryId: cat._id });
+  // An entry that repeats the previous month's budget adds nothing, so drop it instead.
+  const before = budgetsFor(
+    docs.filter((b) => b.categoryId.equals(cat._id)),
+    addMonths(month, -1),
+  ).get(cat._id.toHexString()) ?? null;
+  if (amount === before) {
+    await budgets.deleteOne({ ledgerId, categoryId: cat._id, from: month });
   } else {
-    await budgets.updateOne({ ledgerId, categoryId: cat._id }, { $set: { amount } }, { upsert: true });
+    await budgets.updateOne({ ledgerId, categoryId: cat._id, from: month }, { $set: { amount } }, { upsert: true });
   }
   return null;
 }
@@ -1019,7 +1084,7 @@ export async function countLedgerData(ledgerId: string, session?: ClientSession)
   return {
     transactions: await transactions.countDocuments({ ledgerId }, { session }),
     categories: await categories.countDocuments({ ledgerId, archivedAt: null }, { session }),
-    budgets: await budgets.countDocuments({ ledgerId }, { session }),
+    budgets: (await budgets.distinct("categoryId", { ledgerId, amount: { $ne: null } }, { session })).length,
     recurring: await recurring.countDocuments({ ledgerId }, { session }),
   };
 }
@@ -1089,16 +1154,19 @@ export async function mergeLedgerInto(fromLedgerId: string, toLedgerId: string, 
   if (ruleOps.length) await recurring.bulkWrite(ruleOps, { session });
   await recurring.updateMany({ ledgerId: fromLedgerId }, { $set: { ledgerId: toLedgerId } }, { session });
 
-  // When both ledgers budget the same category, the target's budget wins.
+  // When both ledgers budget the same category, the target's budget history wins whole.
   const sourceBudgets = await budgets.find({ ledgerId: fromLedgerId }, { session }).toArray();
   const targetBudgets = await budgets.find({ ledgerId: toLedgerId }, { session }).toArray();
   const taken = new Set(targetBudgets.map((b) => b.categoryId.toHexString()));
+  // Two source categories folded into one target could both have an entry for the same month.
+  const moved = new Set<string>();
   for (const b of sourceBudgets) {
     const categoryId = mapped(b.categoryId);
-    if (taken.has(categoryId.toHexString())) {
+    const key = `${categoryId.toHexString()}:${b.from ?? ""}`;
+    if (taken.has(categoryId.toHexString()) || moved.has(key)) {
       await budgets.deleteOne({ _id: b._id }, { session });
     } else {
-      taken.add(categoryId.toHexString());
+      moved.add(key);
       await budgets.updateOne({ _id: b._id }, { $set: { ledgerId: toLedgerId, categoryId } }, { session });
     }
   }

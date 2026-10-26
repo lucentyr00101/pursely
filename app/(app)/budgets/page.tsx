@@ -16,7 +16,7 @@ export const metadata: Metadata = { title: "Budgets" };
 export default function BudgetsPage({ searchParams }: PageProps<"/budgets">) {
   return (
     <>
-      <PageHeader title="Budgets" description="Monthly spending limits per category. They repeat every month." />
+      <PageHeader title="Budgets" description="Monthly spending limits per category. Each carries over to later months until you change it." />
       <Suspense fallback={<Skeleton className="h-96" />}>
         <Budgets searchParams={searchParams} />
       </Suspense>
@@ -29,13 +29,17 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
   const requested = `${params.month}-01`;
   const thisMonth = startOf(today, "month");
   const month = isIsoDate(requested) && requested <= thisMonth ? requested : thisMonth;
+  // Past months are a record of what was budgeted, so only the current month can change.
+  const past = month < thisMonth;
 
-  const [rows, { currency }, limit] = await Promise.all([
-    getBudgetStatus(ledger.ledgerId, month, endOf(month, "month")),
+  const [rows, { currency }, budgetLimit] = await Promise.all([
+    getBudgetStatus(ledger.ledgerId, month, endOf(month, "month"), { past }),
     getSettings(ledger.ledgerId),
     getBudgetLimit(ledger.ledgerId),
   ]);
   const canEdit = ledger.role !== "viewer";
+  // The limit is today's recurring net, which says nothing about a past month.
+  const limit = past ? null : budgetLimit;
   const withBudget = rows.filter((r) => r.budget !== null);
   const totalBudget = withBudget.reduce((s, r) => s + r.budget!, 0);
   const totalSpent = withBudget.reduce((s, r) => s + r.spent, 0);
@@ -62,7 +66,7 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
 
       {(withBudget.length > 0 || limit !== null) && (
         <Card title="All budgeted categories">
-          {withBudget.length > 0 && <BudgetMeter spent={totalSpent} budget={totalBudget} currency={currency} />}
+          {withBudget.length > 0 && <BudgetMeter spent={totalSpent} budget={totalBudget} currency={currency} ended={past} />}
           {limit !== null && (
             <p className={`text-sm text-muted ${withBudget.length > 0 ? "mt-3 border-t border-line pt-3" : ""}`}>
               Budgets can total up to{" "}
@@ -81,7 +85,14 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
         </Card>
       )}
 
-      <Card title="Categories" description={`Amounts in ${currency}, saved when you leave the field. Leave empty for no limit.`}>
+      <Card
+        title="Categories"
+        description={
+          past
+            ? "What each category was budgeted that month. Budgets can only change in the current month."
+            : `Amounts in ${currency}, saved when you leave the field. Leave empty for no limit. Changes apply from this month on.`
+        }
+      >
         <ul className="divide-y divide-line">
           {rows.map((r) => (
             // Name and limit share the top line so each row stays short on phones; the meter spans beneath.
@@ -93,11 +104,17 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
               <div className="min-w-0 flex-1">
                 <div className="flex items-start gap-3">
                   <p className="line-clamp-2 min-w-0 flex-1 pt-2.5 font-medium break-words">{r.name}</p>
-                  <BudgetForm key={`${r.categoryId}-${r.budget}`} categoryId={r.categoryId} name={r.name} budget={r.budget} currency={currency} canEdit={canEdit} max={limit === null ? null : Math.max(0, limit - (totalBudget - (r.budget ?? 0)))} />
+                  {past ? (
+                    <p className={`tabular shrink-0 pt-2.5 text-sm ${r.budget === null ? "text-muted" : "font-medium"}`}>
+                      {r.budget === null ? "No limit" : formatMoney(r.budget, currency)}
+                    </p>
+                  ) : (
+                    <BudgetForm key={`${r.categoryId}-${r.budget}`} categoryId={r.categoryId} name={r.name} budget={r.budget} currency={currency} canEdit={canEdit} max={limit === null ? null : Math.max(0, limit - (totalBudget - (r.budget ?? 0)))} />
+                  )}
                 </div>
                 {r.budget !== null ? (
                   <div className="mt-2">
-                    <BudgetMeter spent={r.spent} budget={r.budget} currency={currency} />
+                    <BudgetMeter spent={r.spent} budget={r.budget} currency={currency} ended={past} />
                   </div>
                 ) : (
                   <p className="tabular mt-1 text-sm text-muted">Spent {formatMoney(r.spent, currency)}</p>

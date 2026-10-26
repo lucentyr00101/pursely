@@ -7,7 +7,7 @@ import * as household from "@/lib/household";
 import type { LedgerContext } from "@/lib/household";
 import * as data from "@/lib/data";
 import { CATEGORY_COLORS, ICON_KEYS } from "@/lib/category-defs";
-import { GRANULARITIES, isIsoDate } from "@/lib/dates";
+import { GRANULARITIES, isIsoDate, startOf } from "@/lib/dates";
 import { MAX_EVERY } from "@/lib/recurring";
 import { isCurrency, parseAmount } from "@/lib/money";
 
@@ -201,7 +201,9 @@ export async function saveBudget(_: ActionState, formData: FormData): Promise<Ac
     cents = parseAmount(raw);
     if (cents === null) return fail("Enter a budget greater than 0, or leave it empty to remove it.");
   }
-  const error = await data.setBudget(ctx.ledgerId, categoryId, cents);
+  // Only the current month can change; past months keep the budgets they had.
+  const month = startOf(await getToday(), "month");
+  const error = await data.setBudget(ctx.ledgerId, categoryId, cents, month);
   return error ? fail(error) : done();
 }
 
