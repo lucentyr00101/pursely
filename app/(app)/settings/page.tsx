@@ -6,6 +6,7 @@ import { getHousehold, listOutgoingInvites } from "@/lib/household";
 import { startOf } from "@/lib/dates";
 import { CurrencyForm, ExportForm } from "@/components/settings-forms";
 import { HouseholdCard } from "@/components/household-card";
+import { InstallAppCard } from "@/components/install-app";
 import { LegalLinks } from "@/components/legal-links";
 import { UserMenu, UserMenuSkeleton } from "@/components/user-menu";
 import { Card, PageHeader, Skeleton } from "@/components/ui";
@@ -31,6 +32,7 @@ export default function SettingsPage() {
         <Suspense fallback={<Skeleton className="h-32" />}>
           <ExportCard />
         </Suspense>
+        <InstallAppCard />
         <LegalLinks />
       </div>
     </>

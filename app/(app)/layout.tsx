@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { InstallPromptListener } from "@/components/install-app";
 import { InviteBanner } from "@/components/invite-banner";
 import { Logo } from "@/components/logo";
 import { BottomNav, LogoLink, SideNav } from "@/components/nav";
@@ -39,6 +40,7 @@ export default function AppLayout({ children }: LayoutProps<"/">) {
       </main>
       <BottomNav />
       <PullToRefresh />
+      <InstallPromptListener />
     </div>
   );
 }
