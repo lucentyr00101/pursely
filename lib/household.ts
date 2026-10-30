@@ -80,6 +80,7 @@ export type AcceptPreview = {
   categories: number;
   budgets: number;
   recurring: number;
+  cards: number;
   currency: string;
   householdCurrency: string;
 };

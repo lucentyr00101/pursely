@@ -436,27 +436,28 @@ export async function createCard(ledgerId: string, input: CardInput): Promise<st
 /**
  * A new cutoff re-sorts the card's purchases on statements that haven't closed (today or later),
  * except ones moved by hand. A purchase may land on a statement that just closed, but never in a
- * month before this one, so past budgets don't change.
+ * month before this one, so past budgets don't change. The re-sort runs before the card is saved,
+ * so if it fails, saving the same cutoff again retries it (it skips purchases already moved).
  */
 export async function updateCard(ledgerId: string, id: string, input: CardInput, today: string): Promise<string | null> {
   const doc = await findCard(ledgerId, id);
   if (!doc) return "Card not found.";
+  if (input.cutoffDay !== doc.cutoffDay) {
+    const thisMonth = startOf(today, "month");
+    const open = await transactions
+      .find(
+        { ledgerId, cardId: doc._id, statementDate: { $type: "date", $gte: toUtc(today) }, statementPinned: { $ne: true } },
+        { projection: { date: 1, statementDate: 1 } },
+      )
+      .toArray();
+    const ops: AnyBulkWriteOperation<TransactionDoc>[] = open.flatMap((t) => {
+      const next = statementFor(toIso(t.date), input.cutoffDay);
+      if (startOf(next, "month") < thisMonth || next === toIso(t.statementDate!)) return [];
+      return [{ updateOne: { filter: { _id: t._id }, update: { $set: { statementDate: toUtc(next) } } } }];
+    });
+    if (ops.length) await transactions.bulkWrite(ops);
+  }
   await cards.updateOne({ _id: doc._id }, { $set: { ...input, updatedAt: new Date() } });
-  if (input.cutoffDay === doc.cutoffDay) return null;
-
-  const thisMonth = startOf(today, "month");
-  const open = await transactions
-    .find(
-      { ledgerId, cardId: doc._id, statementDate: { $gte: toUtc(today) }, statementPinned: { $ne: true } },
-      { projection: { date: 1, statementDate: 1 } },
-    )
-    .toArray();
-  const ops: AnyBulkWriteOperation<TransactionDoc>[] = open.flatMap((t) => {
-    const next = statementFor(toIso(t.date), input.cutoffDay);
-    if (startOf(next, "month") < thisMonth || next === toIso(t.statementDate!)) return [];
-    return [{ updateOne: { filter: { _id: t._id }, update: { $set: { statementDate: toUtc(next) } } } }];
-  });
-  if (ops.length) await transactions.bulkWrite(ops);
   return null;
 }
 
@@ -1194,12 +1195,12 @@ export async function getBudgetStatus(
       .aggregate<{ _id: ObjectId; total: number }>([
         {
           // A card purchase counts in its statement's month; everything else in the month of its date.
+          // Each branch repeats ledgerId and type, and the first names $type, so each branch can use its
+          // own index (the statementDate one is partial) and only scans the month.
           $match: {
-            ledgerId,
-            type: "expense",
             $or: [
-              { statementDate: { $gte: toUtc(monthStart), $lte: toUtc(monthEnd) } },
-              { statementDate: null, date: { $gte: toUtc(monthStart), $lte: toUtc(monthEnd) } },
+              { ledgerId, type: "expense", statementDate: { $type: "date", $gte: toUtc(monthStart), $lte: toUtc(monthEnd) } },
+              { ledgerId, type: "expense", statementDate: null, date: { $gte: toUtc(monthStart), $lte: toUtc(monthEnd) } },
             ],
           },
         },
@@ -1304,15 +1305,16 @@ export async function exportRows(ledgerId: string, from: string, to: string) {
 // These take an optional session so they can run inside a transaction. Operations in a transaction
 // must not overlap, so everything here runs sequentially.
 
-export type LedgerCounts = { transactions: number; categories: number; budgets: number; recurring: number };
+export type LedgerCounts = { transactions: number; categories: number; budgets: number; recurring: number; cards: number };
 
-/** What a ledger holds: transactions, active custom categories and budgets. */
+/** What a ledger holds: transactions, active custom categories, budgets and active cards. */
 export async function countLedgerData(ledgerId: string, session?: ClientSession): Promise<LedgerCounts> {
   return {
     transactions: await transactions.countDocuments({ ledgerId }, { session }),
     categories: await categories.countDocuments({ ledgerId, archivedAt: null }, { session }),
     budgets: (await budgets.distinct("categoryId", { ledgerId, amount: { $ne: null } }, { session })).length,
     recurring: await recurring.countDocuments({ ledgerId }, { session }),
+    cards: await cards.countDocuments({ ledgerId, archivedAt: null }, { session }),
   };
 }
 

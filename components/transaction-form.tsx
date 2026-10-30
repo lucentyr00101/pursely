@@ -80,16 +80,19 @@ export function TransactionForm({ categories, cards, currency, date, transaction
 
       <CategorySelect id="tx-category" categories={categories} type={type} selected={transaction?.subcategoryId ?? transaction?.categoryId} />
 
-      {type === "expense" && paidWith !== null && (
-        <PaidWithField
-          key={paidWith}
-          id="tx-paid-with"
-          cards={cards}
-          date={txDate}
-          defaultValue={paidWith}
-          defaultStatement={transaction?.statementDate}
-          showStatement={!repeat}
-        />
+      {/* Hidden rather than removed for income, so switching back keeps the choice. The server ignores it for income. */}
+      {paidWith !== null && (
+        <div hidden={type !== "expense"}>
+          <PaidWithField
+            key={paidWith}
+            id="tx-paid-with"
+            cards={cards}
+            date={txDate}
+            defaultValue={paidWith}
+            defaultStatement={transaction?.statementDate}
+            showStatement={!repeat}
+          />
+        </div>
       )}
 
       <div className={transaction ? "" : "grid grid-cols-2 gap-3"}>

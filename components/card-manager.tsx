@@ -67,7 +67,9 @@ export function CardManager({ cards, canEdit }: { cards: PaymentCard[]; canEdit:
         {dialog?.kind === "edit" && (
           <CardForm card={dialog.card} onDone={close} onArchive={() => setDialog({ kind: "archive", card: dialog.card })} />
         )}
-        {dialog?.kind === "archive" && <ConfirmArchive card={dialog.card} onDone={close} />}
+        {dialog?.kind === "archive" && (
+          <ConfirmArchive card={dialog.card} onDone={close} onCancel={() => setDialog({ kind: "edit", card: dialog.card })} />
+        )}
       </Modal>
     </>
   );
@@ -137,7 +139,7 @@ function CardForm({ card, onDone, onArchive }: { card?: PaymentCard; onDone: () 
   );
 }
 
-function ConfirmArchive({ card, onDone }: { card: PaymentCard; onDone: () => void }) {
+function ConfirmArchive({ card, onDone, onCancel }: { card: PaymentCard; onDone: () => void; onCancel: () => void }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string>();
   return (
@@ -145,7 +147,7 @@ function ConfirmArchive({ card, onDone }: { card: PaymentCard; onDone: () => voi
       <p className="text-muted">It disappears from the Paid with list. Purchases already tagged keep it.</p>
       <FormError message={error} />
       <div className="grid grid-cols-2 gap-3">
-        <button type="button" className="btn btn-ghost" onClick={onDone}>
+        <button type="button" className="btn btn-ghost" onClick={onCancel}>
           Cancel
         </button>
         <button

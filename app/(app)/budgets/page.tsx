@@ -35,7 +35,7 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
   const month = isIsoDate(requested) && requested <= maxMonth ? requested : thisMonth;
   // Past months are a record of what was budgeted, so only the current month can change.
   const past = month < thisMonth;
-  // Next month is a read-only peek at card purchases already on its statements.
+  // Next month is a read-only peek at spending already counted in it, like card purchases on its statements.
   const upcoming = month > thisMonth;
   const readOnly = past || upcoming;
 
@@ -100,7 +100,8 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
             "What each category was budgeted that month. Budgets can only change in the current month."
           ) : upcoming ? (
             <>
-              Card purchases already counted for {formatDate(month, { month: "long" })}. Budgets carry over from{" "}
+              Spending already counted for {formatDate(month, { month: "long" })}, like card purchases on statements that close
+              then. Budgets carry over from{" "}
               <Link href="/budgets" className="font-medium text-fg underline underline-offset-2 hover:text-primary active:text-primary">
                 {formatDate(thisMonth, { month: "long" })}
               </Link>

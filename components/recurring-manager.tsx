@@ -325,8 +325,11 @@ function RecurringForm({ categories, cards, currency, today, rule, onDone }: {
 
       <CategorySelect id="rc-category" categories={categories} type={type} selected={rule?.subcategoryId ?? rule?.categoryId} />
 
-      {type === "expense" && paidWith !== null && (
-        <PaidWithField key={paidWith} id="rc-paid-with" cards={cards} date={today} defaultValue={paidWith} showStatement={false} />
+      {/* Hidden rather than removed for income, so switching back keeps the choice. The server ignores it for income. */}
+      {paidWith !== null && (
+        <div hidden={type !== "expense"}>
+          <PaidWithField key={paidWith} id="rc-paid-with" cards={cards} date={today} defaultValue={paidWith} showStatement={false} />
+        </div>
       )}
 
       <fieldset>

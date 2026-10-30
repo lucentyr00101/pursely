@@ -91,7 +91,13 @@ const categorySchema = z.object({
 });
 
 const cardSchema = z.object({
-  name: z.string().trim().min(1, "Give the card a name.").max(40, "Keep the name under 40 characters."),
+  name: z
+    .string()
+    .trim()
+    .min(1, "Give the card a name.")
+    .max(40, "Keep the name under 40 characters.")
+    // Only the last 4 digits are ever stored, so a name that could hold a card number is refused.
+    .refine((v) => v.replace(/\D/g, "").length < 12, "Leave the card number out of the name."),
   last4: z.string().regex(/^\d{4}$/, "Enter the card's last 4 digits."),
   cutoffDay: z.coerce
     .number("Pick a cutoff day from 1 to 31.")
@@ -233,6 +239,7 @@ export async function saveCard(_: ActionState, formData: FormData): Promise<Acti
   if (!parsed.success) return fail(firstError(parsed.error));
 
   const id = formData.get("id");
+  if (id && !isId(id)) return fail(BAD_ID);
   const error =
     typeof id === "string" && id
       ? await data.updateCard(ctx.ledgerId, id, parsed.data, await getToday())
