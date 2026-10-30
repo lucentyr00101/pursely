@@ -42,3 +42,10 @@ export function ordinal(day: number): string {
 export function cardLabel(card: { name: string; last4: string }): string {
   return `${card.name} ••${card.last4}`;
 }
+
+/** "RCBC Black ••4444", "GCash", or "Card" when the card can't be found; null when no method is set. */
+export function methodLabel(method: Method | null, card: { name: string; last4: string } | undefined): string | null {
+  if (!method) return null;
+  if (method !== "card") return METHOD_LABELS[method];
+  return card ? cardLabel(card) : "Card";
+}

@@ -2,11 +2,12 @@
 
 import { Fragment, useCallback, useState, useTransition } from "react";
 import Link from "next/link";
-import { ArrowDownRight, ArrowUpRight, LoaderCircle, Pencil, Repeat, Trash2 } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, CreditCard, LoaderCircle, Pencil, Repeat, Trash2 } from "lucide-react";
 import { removeTransaction } from "@/app/actions";
 import type { CategoryNode, PaymentCard, Transaction } from "@/lib/data";
 import { formatDate } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
+import { methodLabel } from "@/lib/statements";
 import { CategoryIcon } from "./category-icon";
 import { Modal } from "./modal";
 import { TransactionForm } from "./transaction-form";
@@ -38,6 +39,7 @@ export function TransactionList({ transactions, categories, cards, currency, can
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
   const lookup = buildLookup(categories);
+  const cardsById = new Map(cards.map((c) => [c.id, c]));
   const closeEdit = useCallback(() => setEditing(null), []);
 
   return (
@@ -48,6 +50,7 @@ export function TransactionList({ transactions, categories, cards, currency, can
           const sub = t.subcategoryId ? lookup.get(t.subcategoryId) : null;
           const isIncome = t.type === "income";
           const author = authors?.[t.createdBy];
+          const method = methodLabel(t.method, t.cardId ? cardsById.get(t.cardId) : undefined);
           const content = (
             <>
               <CategoryIcon icon={cat?.icon ?? "tag"} color={cat?.color ?? "#94a3b8"} />
@@ -57,7 +60,21 @@ export function TransactionList({ transactions, categories, cards, currency, can
                   {sub && <span className="text-muted"> › {sub.name}</span>}
                   {t.recurringId && <Repeat className="ml-1.5 inline size-3.5 align-[-0.0625em] text-subtle" aria-label="Recurring" />}
                 </span>
-                {t.note && <span className="block truncate text-sm text-muted">{t.note}</span>}
+                {(method || t.note) && (
+                  // On a narrow row the note wraps under the tag, and the tag wraps like the category name above it.
+                  <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm text-muted">
+                    {method && (
+                      <span className="max-w-full rounded bg-sunken px-1.5 py-0.5 text-xs break-words">
+                        {t.method === "card" && <CreditCard className="mr-1 inline size-3 align-[-0.125em]" aria-hidden />}
+                        {method}
+                        {t.statementDate && (
+                          <span className="whitespace-nowrap"> · {formatDate(t.statementDate, { month: "short" })} stmt</span>
+                        )}
+                      </span>
+                    )}
+                    {t.note && <span className="max-w-full truncate">{t.note}</span>}
+                  </span>
+                )}
               </span>
               <span className={`tabular flex shrink-0 items-center gap-1 font-semibold ${isIncome ? "text-success" : ""}`}>
                 {isIncome ? (

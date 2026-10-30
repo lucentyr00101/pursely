@@ -2,7 +2,7 @@ import { getLedgerContext } from "@/lib/session";
 import { exportRows } from "@/lib/data";
 import { isIsoDate } from "@/lib/dates";
 
-const COLUMNS = ["date", "type", "category", "subcategory", "amount", "note"] as const;
+const COLUMNS = ["date", "type", "category", "subcategory", "amount", "paid_with", "statement", "note"] as const;
 
 function csvCell(value: string) {
   // Quote everything; neutralise spreadsheet formula injection.

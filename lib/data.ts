@@ -5,7 +5,7 @@ import { SYSTEM_CATEGORIES, type IconKey, type TxType } from "./category-defs";
 import { addMonths, buckets, startOf, toIso, toUtc, type Granularity, type Range } from "./dates";
 import { DEFAULT_CURRENCY, formatMoney } from "./money";
 import { monthlyTotals, occurrence } from "./recurring";
-import { statementChoices, statementFor, type Method } from "./statements";
+import { methodLabel, statementChoices, statementFor, type Method } from "./statements";
 
 // ---------- Documents ----------
 
@@ -1275,15 +1275,17 @@ export async function setBudget(ledgerId: string, categoryId: string, amount: nu
 // ---------- Export ----------
 
 export async function exportRows(ledgerId: string, from: string, to: string) {
-  const [txs, cats] = await Promise.all([
+  const [txs, cats, ledgerCards] = await Promise.all([
     listTransactions(ledgerId, from, to),
     listCategories(ledgerId, { includeArchived: true }),
+    listCards(ledgerId, { includeArchived: true }),
   ]);
   const names = new Map<string, string>();
   for (const c of cats) {
     names.set(c.id, c.name);
     for (const child of c.children) names.set(child.id, child.name);
   }
+  const cardsById = new Map(ledgerCards.map((c) => [c.id, c]));
   return txs
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((t) => ({
@@ -1292,6 +1294,8 @@ export async function exportRows(ledgerId: string, from: string, to: string) {
       category: names.get(t.categoryId) ?? "",
       subcategory: t.subcategoryId ? (names.get(t.subcategoryId) ?? "") : "",
       amount: (t.amount / 100).toFixed(2),
+      paid_with: methodLabel(t.method, t.cardId ? cardsById.get(t.cardId) : undefined) ?? "",
+      statement: t.statementDate ?? "",
       note: t.note,
     }));
 }
