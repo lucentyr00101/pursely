@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ChevronLeft, ChevronRight, Plus, Receipt, Repeat, Search } from "lucide-react";
 import { getToday, getLedger } from "@/lib/session";
-import { dailyTotals, getSettings, listCategories, listTransactions } from "@/lib/data";
+import { dailyTotals, getSettings, listCards, listCategories, listTransactions } from "@/lib/data";
 import { getHousehold, listUsers } from "@/lib/household";
 import { addDays, formatDate, isIsoDate, startOf } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
@@ -27,11 +27,12 @@ async function Daily({ searchParams }: { searchParams: PageProps<"/transactions"
   const date = isIsoDate(params.date) ? params.date : today;
   const weekStart = startOf(date, "week");
 
-  const [categories, settings, transactions, week] = await Promise.all([
+  const [categories, settings, transactions, week, cards] = await Promise.all([
     listCategories(ledger.ledgerId),
     getSettings(ledger.ledgerId),
     listTransactions(ledger.ledgerId, date, date),
     dailyTotals(ledger.ledgerId, weekStart, addDays(weekStart, 6)),
+    listCards(ledger.ledgerId, { includeArchived: true }),
   ]);
   const { currency } = settings;
   const canEdit = ledger.role !== "viewer";
@@ -67,7 +68,7 @@ async function Daily({ searchParams }: { searchParams: PageProps<"/transactions"
                 Today
               </Link>
             )}
-            <AddTransactionButton categories={categories} currency={currency} date={date} canEdit={canEdit} />
+            <AddTransactionButton categories={categories} cards={cards} currency={currency} date={date} canEdit={canEdit} />
           </div>
         }
       />
@@ -124,7 +125,7 @@ async function Daily({ searchParams }: { searchParams: PageProps<"/transactions"
 
       <Card title="Transactions">
         {transactions.length ? (
-          <TransactionList transactions={transactions} categories={categories} currency={currency} canEdit={canEdit} authors={authors} />
+          <TransactionList transactions={transactions} categories={categories} cards={cards} currency={currency} canEdit={canEdit} authors={authors} />
         ) : (
           <EmptyState icon={<Receipt className="size-8" aria-hidden />} title="Nothing logged for this day">
             {canEdit && (

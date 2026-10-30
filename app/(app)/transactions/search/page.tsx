@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ChevronLeft, Receipt, SearchX } from "lucide-react";
 import { getLedger, getToday } from "@/lib/session";
-import { getSettings, listCategories, searchTransactions, type TransactionSearch } from "@/lib/data";
+import { getSettings, listCards, listCategories, searchTransactions, type TransactionSearch } from "@/lib/data";
 import { getHousehold, listUsers } from "@/lib/household";
 import { isIsoDate } from "@/lib/dates";
 import { formatMoney, parseAmount } from "@/lib/money";
@@ -79,11 +79,12 @@ async function Results({ searchParams }: { searchParams: PageProps<"/transaction
   const requested = Math.floor(Number(one(params.limit)));
   const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, PAGE_SIZE), MAX_LIMIT) : PAGE_SIZE;
 
-  const [categories, settings, result, household] = await Promise.all([
+  const [categories, settings, result, household, cards] = await Promise.all([
     listCategories(ledger.ledgerId),
     getSettings(ledger.ledgerId),
     searchTransactions(ledger.ledgerId, search, limit),
     ledger.householdId ? getHousehold(ledger.householdId) : null,
+    listCards(ledger.ledgerId, { includeArchived: true }),
   ]);
   const { currency } = settings;
   const canEdit = ledger.role !== "viewer";
@@ -119,6 +120,7 @@ async function Results({ searchParams }: { searchParams: PageProps<"/transaction
             <TransactionList
               transactions={result.transactions}
               categories={categories}
+              cards={cards}
               currency={currency}
               canEdit={canEdit}
               authors={authors}

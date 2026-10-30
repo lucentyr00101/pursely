@@ -4,7 +4,7 @@ import { Fragment, useCallback, useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowDownRight, ArrowUpRight, LoaderCircle, Pencil, Repeat, Trash2 } from "lucide-react";
 import { removeTransaction } from "@/app/actions";
-import type { CategoryNode, Transaction } from "@/lib/data";
+import type { CategoryNode, PaymentCard, Transaction } from "@/lib/data";
 import { formatDate } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { CategoryIcon } from "./category-icon";
@@ -25,9 +25,10 @@ export function buildLookup(categories: CategoryNode[]): Lookup {
 
 type Authors = Record<string, { name: string; image: string | null }>;
 
-export function TransactionList({ transactions, categories, currency, canEdit, authors, showDates = false }: {
+export function TransactionList({ transactions, categories, cards, currency, canEdit, authors, showDates = false }: {
   transactions: Transaction[];
   categories: CategoryNode[];
+  cards: PaymentCard[];
   currency: string;
   canEdit: boolean;
   authors?: Authors;
@@ -112,6 +113,7 @@ export function TransactionList({ transactions, categories, currency, canEdit, a
         {editing && (
           <TransactionForm
             categories={categories}
+            cards={cards}
             currency={currency}
             date={editing.date}
             transaction={editing}

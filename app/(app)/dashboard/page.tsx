@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ArrowRight, Target } from "lucide-react";
 import { getToday, getLedger } from "@/lib/session";
-import { getBudgetStatus, getInsight, getSettings, getSummary, listCategories } from "@/lib/data";
+import { getBudgetStatus, getInsight, getSettings, getSummary, listCards, listCategories } from "@/lib/data";
 import { geminiEnabled } from "@/lib/gemini";
 import { endOf, resolveRange, startOf, type RangeParams } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
@@ -36,12 +36,13 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
   const range = resolveRange(params, today);
 
   const ai = geminiEnabled();
-  const [summary, settings, categories, budgets, insight] = await Promise.all([
+  const [summary, settings, categories, budgets, insight, cards] = await Promise.all([
     getSummary(ledger.ledgerId, range),
     getSettings(ledger.ledgerId),
     listCategories(ledger.ledgerId),
     getBudgetStatus(ledger.ledgerId, startOf(today, "month"), endOf(today, "month")),
     ai ? getInsight(ledger.ledgerId) : null,
+    listCards(ledger.ledgerId, { includeArchived: true }),
   ]);
   const { currency } = settings;
   const net = summary.income - summary.expense;
@@ -60,7 +61,7 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
         className=""
         title={`Hi, ${ledger.user.name.split(" ")[0]}`}
         description="Here's how your money moved."
-        actions={<AddTransactionButton categories={categories} currency={currency} date={today} canEdit={ledger.role !== "viewer"} />}
+        actions={<AddTransactionButton categories={categories} cards={cards} currency={currency} date={today} canEdit={ledger.role !== "viewer"} />}
       />
 
       {ai && <InsightCard initial={insight} />}

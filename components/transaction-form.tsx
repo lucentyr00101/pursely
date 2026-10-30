@@ -1,16 +1,19 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { LoaderCircle, Repeat } from "lucide-react";
 import { saveTransaction, type ActionState } from "@/app/actions";
-import type { CategoryNode, Transaction } from "@/lib/data";
+import type { CategoryNode, PaymentCard, Transaction } from "@/lib/data";
 import type { TxType } from "@/lib/category-defs";
 import type { Granularity } from "@/lib/dates";
 import { centsToInput } from "@/lib/money";
 import { CategoryIcon } from "./category-icon";
 import { DatePicker } from "./date-picker";
+import { PAID_WITH_KEY, PaidWithField, rememberedPaidWith } from "./paid-with";
 import { Select, type SelectOption } from "./select";
 import { FormError } from "./ui";
+
+const noSubscribe = () => () => {};
 
 const REPEAT_OPTIONS: SelectOption<"" | Granularity>[] = [
   { value: "", label: "Never" },
@@ -20,8 +23,9 @@ const REPEAT_OPTIONS: SelectOption<"" | Granularity>[] = [
   { value: "year", label: "Yearly" },
 ];
 
-export function TransactionForm({ categories, currency, date, transaction, onDone }: {
+export function TransactionForm({ categories, cards, currency, date, transaction, onDone }: {
   categories: CategoryNode[];
+  cards: PaymentCard[];
   currency: string;
   date: string;
   transaction?: Transaction;
@@ -29,15 +33,32 @@ export function TransactionForm({ categories, currency, date, transaction, onDon
 }) {
   const [state, action, pending] = useActionState<ActionState, FormData>(saveTransaction, { ok: false });
   const [type, setType] = useState<TxType>(transaction?.type ?? "expense");
+  const [txDate, setTxDate] = useState(transaction?.date ?? date);
+  // localStorage is read on the client only; the form mounts when its dialog opens, so there's no flash.
+  const remembered = useSyncExternalStore(noSubscribe, () => rememberedPaidWith(cards), () => null);
+  const paidWith = transaction ? (transaction.cardId ?? transaction.method ?? "") : remembered;
+  const submitted = useRef<FormDataEntryValue | null>(null);
 
   useEffect(() => {
-    if (state.ok) onDone();
-  }, [state, onDone]);
+    if (!state.ok) return;
+    if (!transaction && typeof submitted.current === "string" && submitted.current) {
+      try {
+        localStorage.setItem(PAID_WITH_KEY, submitted.current);
+      } catch {}
+    }
+    onDone();
+  }, [state, onDone, transaction]);
 
   const [repeat, setRepeat] = useState<"" | Granularity>("");
 
   return (
-    <form action={action} className="flex flex-col gap-4">
+    <form
+      action={(formData) => {
+        submitted.current = formData.get("paidWith");
+        action(formData);
+      }}
+      className="flex flex-col gap-4"
+    >
       {transaction && <input type="hidden" name="id" value={transaction.id} />}
       <input type="hidden" name="type" value={type} />
 
@@ -62,12 +83,24 @@ export function TransactionForm({ categories, currency, date, transaction, onDon
 
       <CategorySelect id="tx-category" categories={categories} type={type} selected={transaction?.subcategoryId ?? transaction?.categoryId} />
 
+      {type === "expense" && paidWith !== null && (
+        <PaidWithField
+          key={paidWith}
+          id="tx-paid-with"
+          cards={cards}
+          date={txDate}
+          defaultValue={paidWith}
+          defaultStatement={transaction?.statementDate}
+          showStatement={!repeat}
+        />
+      )}
+
       <div className={transaction ? "" : "grid grid-cols-2 gap-3"}>
         <div className="min-w-0">
           <label htmlFor="tx-date" className="label">
             {repeat ? "Starts" : "Date"}
           </label>
-          <DatePicker id="tx-date" name="date" required defaultValue={transaction?.date ?? date} />
+          <DatePicker id="tx-date" name="date" required value={txDate} onChange={setTxDate} />
         </div>
         {!transaction && (
           <div className="min-w-0">
