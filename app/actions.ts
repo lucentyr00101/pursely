@@ -10,6 +10,7 @@ import { CATEGORY_COLORS, ICON_KEYS } from "@/lib/category-defs";
 import { GRANULARITIES, isIsoDate, startOf } from "@/lib/dates";
 import { MAX_EVERY } from "@/lib/recurring";
 import { isCurrency, parseAmount } from "@/lib/money";
+import { isFixedMethod, type Method } from "@/lib/statements";
 
 export type ActionState = { ok: boolean; error?: string; at?: number };
 
@@ -107,6 +108,15 @@ function fields(formData: FormData) {
   return Object.fromEntries([...formData.entries()].filter(([, v]) => typeof v === "string"));
 }
 
+/** The "Paid with" field: empty for not set, a fixed method, or one of the ledger's card ids. */
+function parsePaidWith(formData: FormData): { method: Method | null; cardId: string | null } | ActionState {
+  const value = formData.get("paidWith") ?? "";
+  if (value === "") return { method: null, cardId: null };
+  if (isFixedMethod(value)) return { method: value, cardId: null };
+  if (isId(value)) return { method: "card", cardId: value };
+  return fail(BAD_ID);
+}
+
 // ---------- Transactions ----------
 
 export async function saveTransaction(_: ActionState, formData: FormData): Promise<ActionState> {
@@ -114,16 +124,21 @@ export async function saveTransaction(_: ActionState, formData: FormData): Promi
   if (isFailure(ctx)) return ctx;
   const parsed = txSchema.safeParse(fields(formData));
   if (!parsed.success) return fail(firstError(parsed.error));
+  const paidWith = parsePaidWith(formData);
+  if ("ok" in paidWith) return paidWith;
+  const statement = formData.get("statement") || null;
+  if (statement !== null && !isIsoDate(statement)) return fail("Pick a valid statement.");
+  const input = { ...parsed.data, ...paidWith, statement };
 
   const id = formData.get("id");
   const repeat = repeatSchema.parse(formData.get("repeat") || undefined);
   const error =
     typeof id === "string" && id
-      ? await data.updateTransaction(ctx.ledgerId, id, parsed.data)
+      ? await data.updateTransaction(ctx.ledgerId, id, input)
       : repeat
         ? // The first entry appears when the page reloads, like every later one.
           await data.createRecurring(ctx.ledgerId, ctx.userId, { ...parsed.data, every: 1, unit: repeat, start: parsed.data.date, end: null })
-        : await data.createTransaction(ctx.ledgerId, ctx.userId, parsed.data);
+        : await data.createTransaction(ctx.ledgerId, ctx.userId, input);
   return error ? fail(error) : done();
 }
 

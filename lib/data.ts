@@ -5,6 +5,7 @@ import { SYSTEM_CATEGORIES, type IconKey, type TxType } from "./category-defs";
 import { addMonths, buckets, startOf, toIso, toUtc, type Granularity, type Range } from "./dates";
 import { DEFAULT_CURRENCY, formatMoney } from "./money";
 import { monthlyTotals, occurrence } from "./recurring";
+import { statementChoices, statementFor, type Method } from "./statements";
 
 // ---------- Documents ----------
 
@@ -32,6 +33,10 @@ type TransactionDoc = {
   note: string;
   date: Date; // UTC midnight of the calendar day
   recurringId?: ObjectId; // the rule that generated it, until its date is edited
+  method?: Method; // how an expense was paid; missing = not set
+  cardId?: ObjectId; // with method "card"
+  statementDate?: Date; // with method "card": UTC midnight of its statement's cutoff date, which sets its budget month
+  statementPinned?: true; // moved to another statement by hand, so cutoff edits leave it alone
   createdAt: Date;
   updatedAt: Date;
 };
@@ -170,6 +175,7 @@ export function ensureSetup(): Promise<void> {
       categories.createIndex({ ledgerId: 1, type: 1 }),
       categories.createIndex({ key: 1 }, { unique: true, partialFilterExpression: { key: { $type: "string" } } }),
       transactions.createIndex({ ledgerId: 1, date: -1 }),
+      transactions.createIndex({ ledgerId: 1, statementDate: 1 }, { partialFilterExpression: { statementDate: { $type: "date" } } }),
       budgets.createIndex({ ledgerId: 1, categoryId: 1, from: 1 }, { unique: true }),
       recurring.createIndex({ ledgerId: 1, nextDate: 1 }),
       cards.createIndex({ ledgerId: 1 }),
@@ -419,10 +425,30 @@ export async function createCard(ledgerId: string, input: CardInput): Promise<st
   return null;
 }
 
+/**
+ * A new cutoff re-sorts the card's purchases on statements that haven't closed (today or later),
+ * except ones moved by hand. A purchase may land on a statement that just closed, but never in a
+ * month before this one, so past budgets don't change.
+ */
 export async function updateCard(ledgerId: string, id: string, input: CardInput, today: string): Promise<string | null> {
   const doc = await findCard(ledgerId, id);
   if (!doc) return "Card not found.";
   await cards.updateOne({ _id: doc._id }, { $set: { ...input, updatedAt: new Date() } });
+  if (input.cutoffDay === doc.cutoffDay) return null;
+
+  const thisMonth = startOf(today, "month");
+  const open = await transactions
+    .find(
+      { ledgerId, cardId: doc._id, statementDate: { $gte: toUtc(today) }, statementPinned: { $ne: true } },
+      { projection: { date: 1, statementDate: 1 } },
+    )
+    .toArray();
+  const ops: AnyBulkWriteOperation<TransactionDoc>[] = open.flatMap((t) => {
+    const next = statementFor(toIso(t.date), input.cutoffDay);
+    if (startOf(next, "month") < thisMonth || next === toIso(t.statementDate!)) return [];
+    return [{ updateOne: { filter: { _id: t._id }, update: { $set: { statementDate: toUtc(next) } } } }];
+  });
+  if (ops.length) await transactions.bulkWrite(ops);
   return null;
 }
 
@@ -446,6 +472,10 @@ export type Transaction = {
   subcategoryId: string | null;
   createdBy: string;
   recurringId: string | null;
+  method: Method | null;
+  cardId: string | null;
+  statementDate: string | null;
+  statementPinned: boolean;
 };
 
 export type TransactionInput = {
@@ -454,7 +484,45 @@ export type TransactionInput = {
   date: string;
   note: string;
   categoryId: string; // may be a subcategory id
+  method: Method | null;
+  cardId: string | null;
+  statement: string | null; // the chosen statement date, or null for the automatic one
 };
+
+const PAYMENT_FIELDS = ["method", "cardId", "statementDate", "statementPinned"] as const;
+type PaymentFields = Pick<TransactionDoc, (typeof PAYMENT_FIELDS)[number]>;
+
+/**
+ * The payment fields to $set and $unset. Income carries none. A card purchase whose date, card and
+ * statement are unchanged keeps its stored statement, so editing a note never moves it even after
+ * the card's cutoff changed; otherwise the statement must be the previous, automatic or next one.
+ */
+async function resolvePayment(
+  ledgerId: string,
+  input: TransactionInput,
+  existing: (PaymentFields & { date: Date }) | null,
+): Promise<{ set: PaymentFields; unset: string[] } | string> {
+  const none = { set: {}, unset: [...PAYMENT_FIELDS] };
+  if (input.type !== "expense" || !input.method) return none;
+  if (input.method !== "card") return { set: { method: input.method }, unset: ["cardId", "statementDate", "statementPinned"] };
+
+  const card = await findCard(ledgerId, input.cardId);
+  const sameCard = Boolean(card && existing?.cardId?.equals(card._id));
+  if (!card || (card.archivedAt !== null && !sameCard)) return "Pick a valid card.";
+  const date = toUtc(input.date);
+  const stored = existing?.statementDate && toIso(existing.statementDate);
+  if (sameCard && +existing!.date === +date && stored && (input.statement ?? stored) === stored) {
+    return { set: { method: "card", cardId: card._id }, unset: [] };
+  }
+  const choices = statementChoices(input.date, card.cutoffDay);
+  const statement = input.statement ?? choices[1];
+  if (!choices.includes(statement)) return "Pick a valid statement.";
+  const pinned = statement !== choices[1];
+  return {
+    set: { method: "card", cardId: card._id, statementDate: toUtc(statement), ...(pinned && { statementPinned: true as const }) },
+    unset: pinned ? [] : ["statementPinned"],
+  };
+}
 
 /** Resolve a picked category id into (top-level, subcategory). */
 async function resolveCategory(ledgerId: string, type: TxType, id: string) {
@@ -473,6 +541,8 @@ export async function createTransaction(
   await ensureSetup();
   const resolved = await resolveCategory(ledgerId, input.type, input.categoryId);
   if (!resolved) return "Pick a valid category.";
+  const payment = await resolvePayment(ledgerId, input, null);
+  if (typeof payment === "string") return payment;
   const now = new Date();
   await transactions.insertOne({
     _id: new ObjectId(),
@@ -483,6 +553,7 @@ export async function createTransaction(
     note: input.note,
     date: toUtc(input.date),
     ...resolved,
+    ...payment.set,
     createdAt: now,
     updatedAt: now,
   });
@@ -494,12 +565,18 @@ export async function updateTransaction(ledgerId: string, id: string, input: Tra
   const resolved = await resolveCategory(ledgerId, input.type, input.categoryId);
   if (!resolved) return "Pick a valid category.";
   const _id = new ObjectId(id);
-  const existing = await transactions.findOne({ _id, ledgerId }, { projection: { date: 1 } });
+  const existing = await transactions.findOne(
+    { _id, ledgerId },
+    { projection: { date: 1, method: 1, cardId: 1, statementDate: 1, statementPinned: 1 } },
+  );
   if (!existing) return "Transaction not found.";
+  const payment = await resolvePayment(ledgerId, input, existing);
+  if (typeof payment === "string") return payment;
   const date = toUtc(input.date);
   // A generated entry moved to another day no longer holds its rule's slot for that day, which could
   // collide with another occurrence.
   const moved = +existing.date !== +date;
+  const unset = [...payment.unset, ...(moved ? ["recurringId"] : [])];
   const result = await transactions.updateOne(
     { _id, ledgerId },
     {
@@ -509,9 +586,10 @@ export async function updateTransaction(ledgerId: string, id: string, input: Tra
         note: input.note,
         date,
         ...resolved,
+        ...payment.set,
         updatedAt: new Date(),
       },
-      ...(moved && { $unset: { recurringId: "" } }),
+      ...(unset.length && { $unset: Object.fromEntries(unset.map((f) => [f, ""])) }),
     },
   );
   return result.matchedCount ? null : "Transaction not found.";
@@ -538,6 +616,10 @@ function toTransaction(d: TransactionDoc): Transaction {
     subcategoryId: d.subcategoryId?.toHexString() ?? null,
     createdBy: d.createdBy,
     recurringId: d.recurringId?.toHexString() ?? null,
+    method: d.method ?? null,
+    cardId: d.cardId?.toHexString() ?? null,
+    statementDate: d.statementDate ? toIso(d.statementDate) : null,
+    statementPinned: d.statementPinned === true,
   };
 }
 
@@ -1056,7 +1138,17 @@ export async function getBudgetStatus(
     budgets.find({ ledgerId }).toArray(),
     transactions
       .aggregate<{ _id: ObjectId; total: number }>([
-        { $match: { ...inRange(ledgerId, monthStart, monthEnd), type: "expense" } },
+        {
+          // A card purchase counts in its statement's month; everything else in the month of its date.
+          $match: {
+            ledgerId,
+            type: "expense",
+            $or: [
+              { statementDate: { $gte: toUtc(monthStart), $lte: toUtc(monthEnd) } },
+              { statementDate: null, date: { $gte: toUtc(monthStart), $lte: toUtc(monthEnd) } },
+            ],
+          },
+        },
         { $group: { _id: "$categoryId", total: { $sum: "$amount" } } },
       ])
       .toArray(),
