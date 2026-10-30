@@ -3,7 +3,7 @@
 import { Fragment, useActionState, useCallback, useEffect, useState, useTransition } from "react";
 import { CalendarClock, LoaderCircle, Pause, Pencil, Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { pauseRecurring, removeRecurring, saveRecurring, type ActionState } from "@/app/actions";
-import type { CategoryNode, Recurring } from "@/lib/data";
+import type { CategoryNode, PaymentCard, Recurring } from "@/lib/data";
 import type { TxType } from "@/lib/category-defs";
 import { formatDate, GRANULARITIES, type Granularity } from "@/lib/dates";
 import { centsToInput, formatMoney } from "@/lib/money";
@@ -11,6 +11,7 @@ import { describeSchedule, MAX_EVERY, perMonth, remaining } from "@/lib/recurrin
 import { CategoryIcon } from "./category-icon";
 import { DatePicker } from "./date-picker";
 import { Modal } from "./modal";
+import { PaidWithField, useRememberedPaidWith } from "./paid-with";
 import { Select } from "./select";
 import { CategorySelect, TypeToggle } from "./transaction-form";
 import { buildLookup } from "./transaction-list";
@@ -23,7 +24,12 @@ const UNIT_LABELS: Record<Granularity, [string, string]> = {
   year: ["year", "years"],
 };
 
-export function AddRecurringButton({ categories, currency, today }: { categories: CategoryNode[]; currency: string; today: string }) {
+export function AddRecurringButton({ categories, cards, currency, today }: {
+  categories: CategoryNode[];
+  cards: PaymentCard[];
+  currency: string;
+  today: string;
+}) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
   return (
@@ -33,7 +39,7 @@ export function AddRecurringButton({ categories, currency, today }: { categories
         New recurring
       </button>
       <Modal open={open} onClose={close} title="New recurring entry">
-        <RecurringForm categories={categories} currency={currency} today={today} onDone={close} />
+        <RecurringForm categories={categories} cards={cards} currency={currency} today={today} onDone={close} />
       </Modal>
     </>
   );
@@ -60,9 +66,10 @@ type Sort = keyof typeof SORTS;
 const endKey = (r: Recurring) => r.endDate ?? "9999-12-31";
 const monthly = (r: Recurring) => r.amount * perMonth(r.unit, r.every);
 
-export function RecurringList({ rules, categories, currency, canEdit, today }: {
+export function RecurringList({ rules, categories, cards, currency, canEdit, today }: {
   rules: Recurring[];
   categories: CategoryNode[];
+  cards: PaymentCard[];
   currency: string;
   canEdit: boolean;
   today: string;
@@ -232,7 +239,7 @@ export function RecurringList({ rules, categories, currency, canEdit, today }: {
       <Modal open={editing !== null} onClose={closeEdit} title="Edit recurring entry">
         {editing && (
           <>
-            <RecurringForm categories={categories} currency={currency} today={today} rule={editing} onDone={closeEdit} />
+            <RecurringForm categories={categories} cards={cards} currency={currency} today={today} rule={editing} onDone={closeEdit} />
             <div className="mt-3 flex flex-col gap-3 border-t border-line pt-3">
               <FormError message={editError} />
               <div className="grid grid-cols-2 gap-3">
@@ -272,8 +279,9 @@ export function RecurringList({ rules, categories, currency, canEdit, today }: {
   );
 }
 
-function RecurringForm({ categories, currency, today, rule, onDone }: {
+function RecurringForm({ categories, cards, currency, today, rule, onDone }: {
   categories: CategoryNode[];
+  cards: PaymentCard[];
   currency: string;
   today: string;
   rule?: Recurring;
@@ -282,6 +290,8 @@ function RecurringForm({ categories, currency, today, rule, onDone }: {
   const [state, action, pending] = useActionState<ActionState, FormData>(saveRecurring, { ok: false });
   const [type, setType] = useState<TxType>(rule?.type ?? "expense");
   const [every, setEvery] = useState(String(rule?.every ?? 1));
+  const remembered = useRememberedPaidWith(cards);
+  const paidWith = rule ? (rule.cardId ?? rule.method ?? "") : remembered;
 
   useEffect(() => {
     if (state.ok) onDone();
@@ -314,6 +324,10 @@ function RecurringForm({ categories, currency, today, rule, onDone }: {
       </div>
 
       <CategorySelect id="rc-category" categories={categories} type={type} selected={rule?.subcategoryId ?? rule?.categoryId} />
+
+      {type === "expense" && paidWith !== null && (
+        <PaidWithField key={paidWith} id="rc-paid-with" cards={cards} date={today} defaultValue={paidWith} showStatement={false} />
+      )}
 
       <fieldset>
         <legend className="label">Repeats every</legend>

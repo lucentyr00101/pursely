@@ -137,7 +137,14 @@ export async function saveTransaction(_: ActionState, formData: FormData): Promi
       ? await data.updateTransaction(ctx.ledgerId, id, input)
       : repeat
         ? // The first entry appears when the page reloads, like every later one.
-          await data.createRecurring(ctx.ledgerId, ctx.userId, { ...parsed.data, every: 1, unit: repeat, start: parsed.data.date, end: null })
+          await data.createRecurring(ctx.ledgerId, ctx.userId, {
+            ...parsed.data,
+            ...paidWith,
+            every: 1,
+            unit: repeat,
+            start: parsed.data.date,
+            end: null,
+          })
         : await data.createTransaction(ctx.ledgerId, ctx.userId, input);
   return error ? fail(error) : done();
 }
@@ -149,12 +156,15 @@ export async function saveRecurring(_: ActionState, formData: FormData): Promise
   if (isFailure(ctx)) return ctx;
   const parsed = recurringSchema.safeParse(fields(formData));
   if (!parsed.success) return fail(firstError(parsed.error));
+  const paidWith = parsePaidWith(formData);
+  if ("ok" in paidWith) return paidWith;
+  const input = { ...parsed.data, ...paidWith };
 
   const id = formData.get("id");
   const error =
     typeof id === "string" && id
-      ? await data.updateRecurring(ctx.ledgerId, id, parsed.data)
-      : await data.createRecurring(ctx.ledgerId, ctx.userId, parsed.data);
+      ? await data.updateRecurring(ctx.ledgerId, id, input)
+      : await data.createRecurring(ctx.ledgerId, ctx.userId, input);
   return error ? fail(error) : done();
 }
 

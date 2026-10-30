@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ChevronLeft, Repeat } from "lucide-react";
 import { getLedger, getToday } from "@/lib/session";
-import { getSettings, listCategories, listRecurring } from "@/lib/data";
+import { getSettings, listCards, listCategories, listRecurring } from "@/lib/data";
 import { formatMoney } from "@/lib/money";
 import { monthlyTotals } from "@/lib/recurring";
 import { AddRecurringButton, RecurringList } from "@/components/recurring-manager";
@@ -27,10 +27,11 @@ export default function RecurringPage() {
 
 async function Rules() {
   const [ledger, today] = await Promise.all([getLedger(), getToday()]);
-  const [categories, settings, rules] = await Promise.all([
+  const [categories, settings, rules, cards] = await Promise.all([
     listCategories(ledger.ledgerId),
     getSettings(ledger.ledgerId),
     listRecurring(ledger.ledgerId),
+    listCards(ledger.ledgerId, { includeArchived: true }),
   ]);
   const { currency } = settings;
   const canEdit = ledger.role !== "viewer";
@@ -42,7 +43,7 @@ async function Rules() {
       <PageHeader
         title="Recurring"
         description="Bills, subscriptions and income that repeat. Each entry is added to your log on its day."
-        actions={canEdit && <AddRecurringButton categories={categories} currency={currency} today={today} />}
+        actions={canEdit && <AddRecurringButton categories={categories} cards={cards} currency={currency} today={today} />}
       />
 
       {rules.length > 0 && (
@@ -55,7 +56,7 @@ async function Rules() {
 
       <Card>
         {rules.length ? (
-          <RecurringList rules={rules} categories={categories} currency={currency} canEdit={canEdit} today={today} />
+          <RecurringList rules={rules} categories={categories} cards={cards} currency={currency} canEdit={canEdit} today={today} />
         ) : (
           <EmptyState icon={<Repeat className="size-8" aria-hidden />} title="No recurring entries">
             {canEdit && "Add rent, subscriptions or your salary once, and they'll show up in your log every time they're due."}

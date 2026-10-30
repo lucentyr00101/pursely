@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import { useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { Banknote, CircleEllipsis, CreditCard, Smartphone, Wallet, type LucideIcon } from "lucide-react";
 import type { PaymentCard } from "@/lib/data";
 import { formatDate } from "@/lib/dates";
@@ -38,6 +38,13 @@ export function rememberedPaidWith(cards: PaymentCard[]): string {
   } catch {}
   if (stored && (isFixedMethod(stored) || cards.some((c) => !c.archived && c.id === stored))) return stored;
   return "cash";
+}
+
+const noSubscribe = () => () => {};
+
+/** `rememberedPaidWith` on the client, null on the server. Forms mount when their dialog opens, so there's no flash. */
+export function useRememberedPaidWith(cards: PaymentCard[]): string | null {
+  return useSyncExternalStore(noSubscribe, () => rememberedPaidWith(cards), () => null);
 }
 
 /**

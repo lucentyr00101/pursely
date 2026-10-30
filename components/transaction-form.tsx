@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Repeat } from "lucide-react";
 import { saveTransaction, type ActionState } from "@/app/actions";
 import type { CategoryNode, PaymentCard, Transaction } from "@/lib/data";
@@ -9,11 +9,9 @@ import type { Granularity } from "@/lib/dates";
 import { centsToInput } from "@/lib/money";
 import { CategoryIcon } from "./category-icon";
 import { DatePicker } from "./date-picker";
-import { PAID_WITH_KEY, PaidWithField, rememberedPaidWith } from "./paid-with";
+import { PAID_WITH_KEY, PaidWithField, useRememberedPaidWith } from "./paid-with";
 import { Select, type SelectOption } from "./select";
 import { FormError } from "./ui";
-
-const noSubscribe = () => () => {};
 
 const REPEAT_OPTIONS: SelectOption<"" | Granularity>[] = [
   { value: "", label: "Never" },
@@ -34,8 +32,7 @@ export function TransactionForm({ categories, cards, currency, date, transaction
   const [state, action, pending] = useActionState<ActionState, FormData>(saveTransaction, { ok: false });
   const [type, setType] = useState<TxType>(transaction?.type ?? "expense");
   const [txDate, setTxDate] = useState(transaction?.date ?? date);
-  // localStorage is read on the client only; the form mounts when its dialog opens, so there's no flash.
-  const remembered = useSyncExternalStore(noSubscribe, () => rememberedPaidWith(cards), () => null);
+  const remembered = useRememberedPaidWith(cards);
   const paidWith = transaction ? (transaction.cardId ?? transaction.method ?? "") : remembered;
   const submitted = useRef<FormDataEntryValue | null>(null);
 

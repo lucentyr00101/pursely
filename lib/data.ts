@@ -58,6 +58,8 @@ type RecurringDoc = {
   nextIndex: number; // occurrences before this one have been generated
   nextDate: Date | null; // occurrence nextIndex; null once past endDate
   pausedAt: Date | null;
+  method?: Method; // expense rules only; each generated entry gets it
+  cardId?: ObjectId; // with method "card"
   createdAt: Date;
   updatedAt: Date;
 };
@@ -418,6 +420,12 @@ async function findCard(ledgerId: string, id: unknown) {
   return cards.findOne({ _id: new ObjectId(id), ledgerId });
 }
 
+/** A card a purchase or rule may use: the ledger's own, and active unless it is the one it already had. */
+async function usableCard(ledgerId: string, id: unknown, current: ObjectId | undefined) {
+  const card = await findCard(ledgerId, id);
+  return card && (card.archivedAt === null || current?.equals(card._id)) ? card : null;
+}
+
 export async function createCard(ledgerId: string, input: CardInput): Promise<string | null> {
   await ensureSetup();
   const now = new Date();
@@ -506,9 +514,9 @@ async function resolvePayment(
   if (input.type !== "expense" || !input.method) return none;
   if (input.method !== "card") return { set: { method: input.method }, unset: ["cardId", "statementDate", "statementPinned"] };
 
-  const card = await findCard(ledgerId, input.cardId);
-  const sameCard = Boolean(card && existing?.cardId?.equals(card._id));
-  if (!card || (card.archivedAt !== null && !sameCard)) return "Pick a valid card.";
+  const card = await usableCard(ledgerId, input.cardId, existing?.cardId);
+  if (!card) return "Pick a valid card.";
+  const sameCard = Boolean(existing?.cardId?.equals(card._id));
   const date = toUtc(input.date);
   const stored = existing?.statementDate && toIso(existing.statementDate);
   if (sameCard && +existing!.date === +date && stored && (input.statement ?? stored) === stored) {
@@ -723,6 +731,8 @@ export type Recurring = {
   nextDate: string | null; // null once finished
   paused: boolean;
   createdBy: string;
+  method: Method | null;
+  cardId: string | null;
 };
 
 export type RecurringInput = {
@@ -734,7 +744,21 @@ export type RecurringInput = {
   unit: Granularity;
   start: string; // first occurrence; on an edit, the next one
   end: string | null;
+  method: Method | null;
+  cardId: string | null;
 };
+
+/** A rule's method fields to $set and $unset, checked like a transaction's; income carries none. */
+async function resolveRuleMethod(
+  ledgerId: string,
+  input: RecurringInput,
+  current: ObjectId | undefined,
+): Promise<{ set: Pick<RecurringDoc, "method" | "cardId">; unset: string[] } | string> {
+  if (input.type !== "expense" || !input.method) return { set: {}, unset: ["method", "cardId"] };
+  if (input.method !== "card") return { set: { method: input.method }, unset: ["cardId"] };
+  const card = await usableCard(ledgerId, input.cardId, current);
+  return card ? { set: { method: "card", cardId: card._id }, unset: [] } : "Pick a valid card.";
+}
 
 function toRecurring(d: RecurringDoc): Recurring {
   return {
@@ -751,6 +775,8 @@ function toRecurring(d: RecurringDoc): Recurring {
     nextDate: d.nextDate && toIso(d.nextDate),
     paused: d.pausedAt !== null,
     createdBy: d.createdBy,
+    method: d.method ?? null,
+    cardId: d.cardId?.toHexString() ?? null,
   };
 }
 
@@ -782,6 +808,8 @@ export async function createRecurring(ledgerId: string, createdBy: string, input
   await ensureSetup();
   const resolved = await resolveCategory(ledgerId, input.type, input.categoryId);
   if (!resolved) return "Pick a valid category.";
+  const method = await resolveRuleMethod(ledgerId, input, undefined);
+  if (typeof method === "string") return method;
   const now = new Date();
   await recurring.insertOne({
     _id: new ObjectId(),
@@ -792,6 +820,7 @@ export async function createRecurring(ledgerId: string, createdBy: string, input
     note: input.note,
     ...resolved,
     ...schedule(input),
+    ...method.set,
     pausedAt: null,
     createdAt: now,
     updatedAt: now,
@@ -807,9 +836,17 @@ export async function updateRecurring(ledgerId: string, id: string, input: Recur
   if (typeof id !== "string" || !ObjectId.isValid(id)) return "Recurring entry not found.";
   const resolved = await resolveCategory(ledgerId, input.type, input.categoryId);
   if (!resolved) return "Pick a valid category.";
+  const _id = new ObjectId(id);
+  const existing = await recurring.findOne({ _id, ledgerId }, { projection: { cardId: 1 } });
+  if (!existing) return "Recurring entry not found.";
+  const method = await resolveRuleMethod(ledgerId, input, existing.cardId);
+  if (typeof method === "string") return method;
   const result = await recurring.updateOne(
-    { _id: new ObjectId(id), ledgerId },
-    { $set: { type: input.type, amount: input.amount, note: input.note, ...resolved, ...schedule(input), updatedAt: new Date() } },
+    { _id, ledgerId },
+    {
+      $set: { type: input.type, amount: input.amount, note: input.note, ...resolved, ...schedule(input), ...method.set, updatedAt: new Date() },
+      ...(method.unset.length && { $unset: Object.fromEntries(method.unset.map((f) => [f, ""])) }),
+    },
   );
   return result.matchedCount ? null : "Recurring entry not found.";
 }
@@ -856,7 +893,23 @@ const MAX_GENERATED = 100;
  */
 export async function generateDueRecurring(ledgerId: string, today: string): Promise<void> {
   const due = await recurring.find({ ledgerId, pausedAt: null, nextDate: { $lte: toUtc(today) } }).toArray();
+  // A card entry's statement comes from the card's cutoff now; a rule whose card is gone generates with no method.
+  const cardIds = due.flatMap((r) => (r.method === "card" && r.cardId ? [r.cardId] : []));
+  const cutoffs = new Map(
+    cardIds.length
+      ? (await cards.find({ _id: { $in: cardIds }, ledgerId }, { projection: { cutoffDay: 1 } }).toArray()).map((c) => [c._id.toHexString(), c.cutoffDay])
+      : [],
+  );
   for (const rule of due) {
+    const cutoffDay = rule.cardId && cutoffs.get(rule.cardId.toHexString());
+    const payment = (d: string): Pick<TransactionDoc, "method" | "cardId" | "statementDate"> =>
+      rule.method === "card"
+        ? cutoffDay
+          ? { method: "card", cardId: rule.cardId, statementDate: toUtc(statementFor(d, cutoffDay)) }
+          : {}
+        : rule.method
+          ? { method: rule.method }
+          : {};
     const start = toIso(rule.startDate);
     const end = rule.endDate && toIso(rule.endDate);
     const dates: string[] = [];
@@ -881,6 +934,7 @@ export async function generateDueRecurring(ledgerId: string, today: string): Pro
             subcategoryId: rule.subcategoryId,
             date: toUtc(d),
             recurringId: rule._id,
+            ...payment(d),
             createdAt: now,
             updatedAt: now,
           })),
