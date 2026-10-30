@@ -1,9 +1,10 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { getToday, getLedger } from "@/lib/session";
-import { getSettings } from "@/lib/data";
+import { getSettings, listCards } from "@/lib/data";
 import { getHousehold, listOutgoingInvites } from "@/lib/household";
 import { startOf } from "@/lib/dates";
+import { CardManager } from "@/components/card-manager";
 import { CurrencyForm, ExportForm } from "@/components/settings-forms";
 import { HouseholdCard } from "@/components/household-card";
 import { InstallAppCard } from "@/components/install-app";
@@ -26,6 +27,9 @@ export default function SettingsPage() {
         <Suspense fallback={<Skeleton className="h-32" />}>
           <CurrencyCard />
         </Suspense>
+        <Suspense fallback={<Skeleton className="h-40" />}>
+          <CardsSection />
+        </Suspense>
         <Suspense fallback={<Skeleton className="h-48" />}>
           <HouseholdSection />
         </Suspense>
@@ -45,6 +49,16 @@ async function CurrencyCard() {
   return (
     <Card title="Currency">
       <CurrencyForm currency={currency} canEdit={ledger.role !== "viewer"} />
+    </Card>
+  );
+}
+
+async function CardsSection() {
+  const ledger = await getLedger();
+  const cards = await listCards(ledger.ledgerId);
+  return (
+    <Card title="Cards" description="Credit cards you pay with. Purchases count in the month their statement closes.">
+      <CardManager cards={cards} canEdit={ledger.role !== "viewer"} />
     </Card>
   );
 }

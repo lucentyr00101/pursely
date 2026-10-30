@@ -64,6 +64,17 @@ type RecurringDoc = {
  */
 type BudgetDoc = { _id: ObjectId; ledgerId: string; categoryId: ObjectId; from?: string | null; amount: number | null };
 type SettingsDoc = { _id: string; currency: string }; // _id = ledgerId
+/** A credit card. Archived rather than deleted, so purchases keep their card. Never holds more than the last 4 digits. */
+type CardDoc = {
+  _id: ObjectId;
+  ledgerId: string;
+  name: string;
+  last4: string;
+  cutoffDay: number; // 1-31, the day its statement closes
+  archivedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
 /** The latest Gemini overview for a ledger, kept so the dashboard doesn't spend free-tier quota on every load. */
 type InsightDoc = { _id: string; overview: string; steps: string[]; nextMonth: string; createdAt: Date }; // _id = ledgerId
 
@@ -73,6 +84,7 @@ const budgets = db.collection<BudgetDoc>("budgets");
 const settings = db.collection<SettingsDoc>("settings");
 const recurring = db.collection<RecurringDoc>("recurring");
 const insights = db.collection<InsightDoc>("insights");
+const cards = db.collection<CardDoc>("cards");
 
 // ---------- One-time setup ----------
 
@@ -160,6 +172,7 @@ export function ensureSetup(): Promise<void> {
       transactions.createIndex({ ledgerId: 1, date: -1 }),
       budgets.createIndex({ ledgerId: 1, categoryId: 1, from: 1 }, { unique: true }),
       recurring.createIndex({ ledgerId: 1, nextDate: 1 }),
+      cards.createIndex({ ledgerId: 1 }),
       // One entry per rule per day, so two requests generating the same occurrence can't both insert it.
       transactions.createIndex(
         { recurringId: 1, date: 1 },
@@ -375,6 +388,50 @@ export async function archiveCategory(ledgerId: string, id: string): Promise<str
 
 function escapeRegex(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// ---------- Cards ----------
+
+export type PaymentCard = { id: string; name: string; last4: string; cutoffDay: number; archived: boolean };
+export type CardInput = { name: string; last4: string; cutoffDay: number };
+
+function toPaymentCard(doc: CardDoc): PaymentCard {
+  return { id: doc._id.toHexString(), name: doc.name, last4: doc.last4, cutoffDay: doc.cutoffDay, archived: doc.archivedAt !== null };
+}
+
+export async function listCards(ledgerId: string, { includeArchived = false }: { includeArchived?: boolean } = {}): Promise<PaymentCard[]> {
+  const docs = await cards
+    .find({ ledgerId, ...(includeArchived ? {} : { archivedAt: null }) })
+    .sort({ createdAt: 1, _id: 1 })
+    .toArray();
+  return docs.map(toPaymentCard);
+}
+
+async function findCard(ledgerId: string, id: unknown) {
+  if (typeof id !== "string" || !ObjectId.isValid(id)) return null;
+  return cards.findOne({ _id: new ObjectId(id), ledgerId });
+}
+
+export async function createCard(ledgerId: string, input: CardInput): Promise<string | null> {
+  await ensureSetup();
+  const now = new Date();
+  await cards.insertOne({ _id: new ObjectId(), ledgerId, ...input, archivedAt: null, createdAt: now, updatedAt: now });
+  return null;
+}
+
+export async function updateCard(ledgerId: string, id: string, input: CardInput, today: string): Promise<string | null> {
+  const doc = await findCard(ledgerId, id);
+  if (!doc) return "Card not found.";
+  await cards.updateOne({ _id: doc._id }, { $set: { ...input, updatedAt: new Date() } });
+  return null;
+}
+
+/** Archive rather than delete: purchases and recurring entries on the card keep it. */
+export async function archiveCard(ledgerId: string, id: string): Promise<string | null> {
+  const doc = await findCard(ledgerId, id);
+  if (!doc) return "Card not found.";
+  if (doc.archivedAt === null) await cards.updateOne({ _id: doc._id }, { $set: { archivedAt: new Date(), updatedAt: new Date() } });
+  return null;
 }
 
 // ---------- Transactions ----------
@@ -1115,6 +1172,7 @@ export async function deleteLedgerData(ledgerId: string, session?: ClientSession
   await recurring.deleteMany({ ledgerId }, { session });
   await budgets.deleteMany({ ledgerId }, { session });
   await categories.deleteMany({ ledgerId }, { session });
+  await cards.deleteMany({ ledgerId }, { session });
   await settings.deleteOne({ _id: ledgerId }, { session });
   await insights.deleteOne({ _id: ledgerId }, { session });
 }
@@ -1174,6 +1232,7 @@ export async function mergeLedgerInto(fromLedgerId: string, toLedgerId: string, 
   }
   if (ruleOps.length) await recurring.bulkWrite(ruleOps, { session });
   await recurring.updateMany({ ledgerId: fromLedgerId }, { $set: { ledgerId: toLedgerId } }, { session });
+  await cards.updateMany({ ledgerId: fromLedgerId }, { $set: { ledgerId: toLedgerId } }, { session });
 
   // When both ledgers budget the same category, the target's budget history wins whole.
   const sourceBudgets = await budgets.find({ ledgerId: fromLedgerId }, { session }).toArray();

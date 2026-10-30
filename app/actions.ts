@@ -89,6 +89,16 @@ const categorySchema = z.object({
   color: z.enum(CATEGORY_COLORS),
 });
 
+const cardSchema = z.object({
+  name: z.string().trim().min(1, "Give the card a name.").max(40, "Keep the name under 40 characters."),
+  last4: z.string().regex(/^\d{4}$/, "Enter the card's last 4 digits."),
+  cutoffDay: z.coerce
+    .number("Pick a cutoff day from 1 to 31.")
+    .int("Pick a cutoff day from 1 to 31.")
+    .min(1, "Pick a cutoff day from 1 to 31.")
+    .max(31, "Pick a cutoff day from 1 to 31."),
+});
+
 function firstError(error: z.ZodError) {
   return error.issues[0]?.message ?? "Check the form and try again.";
 }
@@ -186,6 +196,30 @@ export async function removeCategory(id: string): Promise<ActionState> {
   const ctx = await editorContext();
   if (isFailure(ctx)) return ctx;
   const error = await data.archiveCategory(ctx.ledgerId, id);
+  return error ? fail(error) : done();
+}
+
+// ---------- Cards ----------
+
+export async function saveCard(_: ActionState, formData: FormData): Promise<ActionState> {
+  const ctx = await editorContext();
+  if (isFailure(ctx)) return ctx;
+  const parsed = cardSchema.safeParse(fields(formData));
+  if (!parsed.success) return fail(firstError(parsed.error));
+
+  const id = formData.get("id");
+  const error =
+    typeof id === "string" && id
+      ? await data.updateCard(ctx.ledgerId, id, parsed.data, await getToday())
+      : await data.createCard(ctx.ledgerId, parsed.data);
+  return error ? fail(error) : done();
+}
+
+export async function archiveCardAction(id: string): Promise<ActionState> {
+  if (!isId(id)) return fail(BAD_ID);
+  const ctx = await editorContext();
+  if (isFailure(ctx)) return ctx;
+  const error = await data.archiveCard(ctx.ledgerId, id);
   return error ? fail(error) : done();
 }
 
