@@ -16,7 +16,10 @@ export const metadata: Metadata = { title: "Budgets" };
 export default function BudgetsPage({ searchParams }: PageProps<"/budgets">) {
   return (
     <>
-      <PageHeader title="Budgets" description="Monthly spending limits per category. Each carries over to later months until you change it." />
+      <PageHeader
+        title="Budgets"
+        description="Monthly spending limits per category. Each carries over to later months until you change it. Card purchases count in the month their statement closes."
+      />
       <Suspense fallback={<Skeleton className="h-96" />}>
         <Budgets searchParams={searchParams} />
       </Suspense>
@@ -28,9 +31,13 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
   const [ledger, today, params] = await Promise.all([getLedger(), getToday(), searchParams]);
   const requested = `${params.month}-01`;
   const thisMonth = startOf(today, "month");
-  const month = isIsoDate(requested) && requested <= thisMonth ? requested : thisMonth;
+  const maxMonth = addMonths(thisMonth, 1);
+  const month = isIsoDate(requested) && requested <= maxMonth ? requested : thisMonth;
   // Past months are a record of what was budgeted, so only the current month can change.
   const past = month < thisMonth;
+  // Next month is a read-only peek at card purchases already on its statements.
+  const upcoming = month > thisMonth;
+  const readOnly = past || upcoming;
 
   const [rows, { currency }, budgetLimit] = await Promise.all([
     getBudgetStatus(ledger.ledgerId, month, endOf(month, "month"), { past }),
@@ -38,13 +45,14 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
     getBudgetLimit(ledger.ledgerId),
   ]);
   const canEdit = ledger.role !== "viewer";
-  // The limit is today's recurring net, which says nothing about a past month.
-  const limit = past ? null : budgetLimit;
+  // The limit is today's recurring net, which says nothing about another month.
+  const limit = readOnly ? null : budgetLimit;
   const withBudget = rows.filter((r) => r.budget !== null);
   const totalBudget = withBudget.reduce((s, r) => s + r.budget!, 0);
   const totalSpent = withBudget.reduce((s, r) => s + r.spent, 0);
   const prev = addMonths(month, -1).slice(0, 7);
   const next = addMonths(month, 1);
+  const atEnd = next > maxMonth;
 
   return (
     <div className="flex flex-col gap-6">
@@ -56,9 +64,9 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
         <Link
           href={`/budgets?month=${next.slice(0, 7)}`}
           aria-label="Next month"
-          aria-disabled={next > thisMonth}
-          tabIndex={next > thisMonth ? -1 : undefined}
-          className={`icon-btn shrink-0 border border-line-strong ${next > thisMonth ? "pointer-events-none opacity-40" : ""}`}
+          aria-disabled={atEnd}
+          tabIndex={atEnd ? -1 : undefined}
+          className={`icon-btn shrink-0 border border-line-strong ${atEnd ? "pointer-events-none opacity-40" : ""}`}
         >
           <ChevronRight className="size-5" aria-hidden />
         </Link>
@@ -88,9 +96,19 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
       <Card
         title="Categories"
         description={
-          past
-            ? "What each category was budgeted that month. Budgets can only change in the current month."
-            : `Amounts in ${currency}, saved when you leave the field. Leave empty for no limit. Changes apply from this month on.`
+          past ? (
+            "What each category was budgeted that month. Budgets can only change in the current month."
+          ) : upcoming ? (
+            <>
+              Card purchases already counted for {formatDate(month, { month: "long" })}. Budgets carry over from{" "}
+              <Link href="/budgets" className="font-medium text-fg underline underline-offset-2 hover:text-primary active:text-primary">
+                {formatDate(thisMonth, { month: "long" })}
+              </Link>
+              ; change them there.
+            </>
+          ) : (
+            `Amounts in ${currency}, saved when you leave the field. Leave empty for no limit. Changes apply from this month on.`
+          )
         }
       >
         <ul className="divide-y divide-line">
@@ -104,7 +122,7 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
               <div className="min-w-0 flex-1">
                 <div className="flex items-start gap-3">
                   <p className="line-clamp-2 min-w-0 flex-1 pt-2.5 font-medium break-words">{r.name}</p>
-                  {past ? (
+                  {readOnly ? (
                     <p className={`tabular shrink-0 pt-2.5 text-sm ${r.budget === null ? "text-muted" : "font-medium"}`}>
                       {r.budget === null ? "No limit" : formatMoney(r.budget, currency)}
                     </p>

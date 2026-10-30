@@ -17,6 +17,9 @@ export const geminiEnabled = () => Boolean(process.env.GEMINI_API_KEY);
 const SYSTEM = `You are a friendly, practical personal finance assistant inside a budgeting app.
 You get a household's numbers for the current month, its recurring income (such as salary) and
 recurring payments, and what is already scheduled for next month.
+Budget spending counts credit card purchases in the month their card statement closes, not the day
+they were made, so early in a month a budget can already include card purchases from late last month.
+Don't judge budget pace as if spending builds up evenly through the month.
 Return:
 - overview: how the month is going, at most 3 sentences. Cover income against spending, how much of
   the recurring salary/income is already committed to recurring payments, and budgets that are over

@@ -19,7 +19,7 @@ export function PageHeader({ title, description, actions, className = "mb-6" }: 
 
 export function Card({ title, description, actions, children, className = "" }: {
   title?: string;
-  description?: string;
+  description?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
