@@ -2,13 +2,14 @@
 
 import { Fragment, useCallback, useState, useTransition } from "react";
 import Link from "next/link";
-import { ArrowDownRight, ArrowUpRight, CreditCard, LoaderCircle, Pencil, Repeat, Trash2 } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, LoaderCircle, Pencil, Repeat, Trash2 } from "lucide-react";
 import { removeTransaction } from "@/app/actions";
 import type { CategoryNode, PaymentCard, Transaction } from "@/lib/data";
 import { formatDate } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
-import { methodColor, methodLabel, onMethodColor, type MethodColors } from "@/lib/statements";
+import type { MethodColors } from "@/lib/statements";
 import { CategoryIcon } from "./category-icon";
+import { MethodTag } from "./method-icon";
 import { Modal } from "./modal";
 import { TransactionForm } from "./transaction-form";
 import { FormError } from "./ui";
@@ -52,8 +53,6 @@ export function TransactionList({ transactions, categories, cards, methodColors,
           const isIncome = t.type === "income";
           const author = authors?.[t.createdBy];
           const card = t.cardId ? cardsById.get(t.cardId) : undefined;
-          const method = methodLabel(t.method, card);
-          const tagColor = t.method && methodColor(t.method, card, methodColors);
           const content = (
             <>
               <CategoryIcon icon={cat?.icon ?? "tag"} color={cat?.color ?? "#94a3b8"} />
@@ -63,21 +62,14 @@ export function TransactionList({ transactions, categories, cards, methodColors,
                   {sub && <span className="text-muted"> › {sub.name}</span>}
                   {t.recurringId && <Repeat className="ml-1.5 inline size-3.5 align-[-0.0625em] text-subtle" aria-label="Recurring" />}
                 </span>
-                {(method || t.note) && (
+                {(t.method || t.note) && (
                   // On a narrow row the note wraps under the tag, and the tag wraps like the category name above it.
                   <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm text-muted">
-                    {method && tagColor && (
-                      <span
-                        className="max-w-full rounded px-1.5 py-0.5 text-xs font-medium break-words"
-                        style={{ backgroundColor: tagColor, color: onMethodColor(tagColor) }}
-                      >
-                        {t.method === "card" && <CreditCard className="mr-1 inline size-3 align-[-0.125em]" aria-hidden />}
-                        {method}
-                        {t.statementDate && (
-                          <span className="whitespace-nowrap"> · {formatDate(t.statementDate, { month: "short" })} stmt</span>
-                        )}
-                      </span>
-                    )}
+                    <MethodTag method={t.method} card={card} colors={methodColors}>
+                      {t.statementDate && (
+                        <span className="whitespace-nowrap"> · {formatDate(t.statementDate, { month: "short" })} stmt</span>
+                      )}
+                    </MethodTag>
                     {t.note && <span className="max-w-full truncate">{t.note}</span>}
                   </span>
                 )}

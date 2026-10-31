@@ -1,5 +1,6 @@
+import type { ReactNode } from "react";
 import { Banknote, CircleEllipsis, CreditCard, Smartphone, Wallet, type LucideIcon } from "lucide-react";
-import { onMethodColor, type Method, type MethodColor } from "@/lib/statements";
+import { methodColor, methodLabel, onMethodColor, type Method, type MethodColor, type MethodColors } from "@/lib/statements";
 
 const METHOD_ICONS: Record<Method, LucideIcon> = { card: CreditCard, cash: Banknote, gcash: Smartphone, maya: Wallet, others: CircleEllipsis };
 
@@ -17,6 +18,24 @@ export function MethodIcon({ method, color, size = "sm" }: { method: Method; col
       style={{ backgroundColor: color, color: onMethodColor(color) }}
     >
       <Icon className={SIZES[size].icon} aria-hidden />
+    </span>
+  );
+}
+
+/** A payment method's name on its solid color, with `children` after it. Renders nothing when no method is set. */
+export function MethodTag({ method, card, colors, children }: {
+  method: Method | null;
+  card: { name: string; last4: string; color: MethodColor } | undefined;
+  colors: MethodColors;
+  children?: ReactNode;
+}) {
+  if (!method) return null;
+  const color = methodColor(method, card, colors);
+  return (
+    <span className="max-w-full rounded px-1.5 py-0.5 text-xs font-medium break-words" style={{ backgroundColor: color, color: onMethodColor(color) }}>
+      {method === "card" && <CreditCard className="mr-1 inline size-3 align-[-0.125em]" aria-hidden />}
+      {methodLabel(method, card)}
+      {children}
     </span>
   );
 }

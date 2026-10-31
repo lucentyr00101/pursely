@@ -11,6 +11,7 @@ import { centsToInput, formatMoney } from "@/lib/money";
 import { describeSchedule, MAX_EVERY, perMonth, remaining } from "@/lib/recurring";
 import { CategoryIcon } from "./category-icon";
 import { DatePicker } from "./date-picker";
+import { MethodTag } from "./method-icon";
 import { Modal } from "./modal";
 import { PaidWithField, useRememberedPaidWith } from "./paid-with";
 import { Select } from "./select";
@@ -85,6 +86,7 @@ export function RecurringList({ rules, categories, cards, methodColors, currency
   const [editError, setEditError] = useState<string>();
   const [sort, setSort] = useState<Sort>("left-asc");
   const lookup = buildLookup(categories);
+  const cardsById = new Map(cards.map((c) => [c.id, c]));
   const categoryName = (r: Recurring) => {
     const cat = lookup.get(r.categoryId);
     const sub = r.subcategoryId ? lookup.get(r.subcategoryId) : null;
@@ -174,6 +176,7 @@ export function RecurringList({ rules, categories, cards, methodColors, currency
                     </Chip>
                   )}
                   {left !== null && <Chip tone="accent">{left === 1 ? "Last one" : `${left} left`}</Chip>}
+                  <MethodTag method={r.method} card={r.cardId ? cardsById.get(r.cardId) : undefined} colors={methodColors} />
                 </span>
               </span>
             </>
