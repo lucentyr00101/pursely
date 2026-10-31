@@ -9,6 +9,7 @@ import {
   DEFAULT_CARD_COLOR,
   DEFAULT_METHOD_COLORS,
   methodLabel,
+  cutoffIn,
   statementChoices,
   statementFor,
   type FixedMethod,
@@ -461,6 +462,7 @@ export async function createCard(ledgerId: string, input: CardInput): Promise<st
  * except ones moved by hand. A purchase may land on a statement that just closed, but never in a
  * month before this one, so past budgets don't change. The re-sort runs before the card is saved,
  * so if it fails, saving the same cutoff again retries it (it skips purchases already moved).
+ * The card's running monthly rules move to the new cutoff in the month of the statement they were on.
  */
 export async function updateCard(ledgerId: string, id: string, input: CardInput, today: string): Promise<string | null> {
   const doc = await findCard(ledgerId, id);
@@ -479,6 +481,16 @@ export async function updateCard(ledgerId: string, id: string, input: CardInput,
       return [{ updateOne: { filter: { _id: t._id }, update: { $set: { statementDate: toUtc(next) } } } }];
     });
     if (ops.length) await transactions.bulkWrite(ops);
+
+    const rules = await recurring.find({ ledgerId, cardId: doc._id, method: "card", unit: "month", nextDate: { $ne: null } }).toArray();
+    const ruleOps: AnyBulkWriteOperation<RecurringDoc>[] = rules.flatMap((r) => {
+      const current = toIso(r.nextDate!);
+      if (current === cutoffIn(current, input.cutoffDay)) return []; // Already moved, by an earlier try.
+      const moved = cutoffIn(statementFor(current, doc.cutoffDay), input.cutoffDay);
+      const endDate = r.endDate && toUtc(keepEnd(toIso(r.endDate), current, moved));
+      return [{ updateOne: { filter: { _id: r._id }, update: { $set: { startDate: toUtc(moved), nextDate: toUtc(moved), nextIndex: 0, endDate, updatedAt: new Date() } } } }];
+    });
+    if (ruleOps.length) await recurring.bulkWrite(ruleOps);
   }
   await cards.updateOne({ _id: doc._id }, { $set: { ...input, updatedAt: new Date() } });
   return null;
@@ -790,11 +802,11 @@ async function resolveRuleMethod(
   ledgerId: string,
   input: RecurringInput,
   current: ObjectId | undefined,
-): Promise<{ set: Pick<RecurringDoc, "method" | "cardId">; unset: string[] } | string> {
+): Promise<{ set: Pick<RecurringDoc, "method" | "cardId">; unset: string[]; cutoffDay?: number } | string> {
   if (input.type !== "expense" || !input.method) return { set: {}, unset: ["method", "cardId"] };
   if (input.method !== "card") return { set: { method: input.method }, unset: ["cardId"] };
   const card = await usableCard(ledgerId, input.cardId, current);
-  return card ? { set: { method: "card", cardId: card._id }, unset: [] } : "Pick a valid card.";
+  return card ? { set: { method: "card", cardId: card._id }, unset: [], cutoffDay: card.cutoffDay } : "Pick a valid card.";
 }
 
 function toRecurring(d: RecurringDoc): Recurring {
@@ -827,10 +839,19 @@ export async function listRecurring(ledgerId: string): Promise<Recurring[]> {
     .sort((a, b) => rank(a) - rank(b) || (a.nextDate ?? "").localeCompare(b.nextDate ?? ""));
 }
 
-/** The schedule fields for a rule anchored at `start`: its first occurrence is `start` itself. */
-function schedule(input: RecurringInput) {
-  const end = input.end ? toUtc(input.end) : null;
-  const start = toUtc(input.start);
+/** Moving a start forward can pass the end date. The end moves with it, so the rule keeps that payment. */
+const keepEnd = (end: string, before: string, after: string) => (before <= end && end < after ? after : end);
+
+/**
+ * The schedule fields for a rule anchored at `start`: its first occurrence is `start` itself. A monthly
+ * rule on a card (`cutoffDay`) starts on the cutoff of the statement that date falls on, and each
+ * occurrence then counts on its own month's statement. A cutoff clamped by a short month stays on that
+ * earlier day afterwards, which is still the same statement.
+ */
+function schedule(input: RecurringInput, cutoffDay?: number) {
+  const startIso = cutoffDay && input.unit === "month" ? statementFor(input.start, cutoffDay) : input.start;
+  const end = input.end ? toUtc(keepEnd(input.end, input.start, startIso)) : null;
+  const start = toUtc(startIso);
   return {
     every: input.every,
     unit: input.unit,
@@ -856,7 +877,7 @@ export async function createRecurring(ledgerId: string, createdBy: string, input
     amount: input.amount,
     note: input.note,
     ...resolved,
-    ...schedule(input),
+    ...schedule(input, method.cutoffDay),
     ...method.set,
     pausedAt: null,
     createdAt: now,
@@ -881,7 +902,7 @@ export async function updateRecurring(ledgerId: string, id: string, input: Recur
   const result = await recurring.updateOne(
     { _id, ledgerId },
     {
-      $set: { type: input.type, amount: input.amount, note: input.note, ...resolved, ...schedule(input), ...method.set, updatedAt: new Date() },
+      $set: { type: input.type, amount: input.amount, note: input.note, ...resolved, ...schedule(input, method.cutoffDay), ...method.set, updatedAt: new Date() },
       ...(method.unset.length && { $unset: Object.fromEntries(method.unset.map((f) => [f, ""])) }),
     },
   );

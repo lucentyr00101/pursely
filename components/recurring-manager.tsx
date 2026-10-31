@@ -297,6 +297,8 @@ function RecurringForm({ categories, cards, methodColors, currency, today, rule,
   const [state, action, pending] = useActionState<ActionState, FormData>(saveRecurring, { ok: false });
   const [type, setType] = useState<TxType>(rule?.type ?? "expense");
   const [every, setEvery] = useState(String(rule?.every ?? 1));
+  const [unit, setUnit] = useState<Granularity>(rule?.unit ?? "month");
+  const [start, setStart] = useState(rule ? (rule.nextDate ?? today) : today);
   const remembered = useRememberedPaidWith(cards);
   const paidWith = rule ? (rule.cardId ?? rule.method ?? "") : remembered;
 
@@ -335,7 +337,7 @@ function RecurringForm({ categories, cards, methodColors, currency, today, rule,
       {/* Hidden rather than removed for income, so switching back keeps the choice. The server ignores it for income. */}
       {paidWith !== null && (
         <div hidden={type !== "expense"}>
-          <PaidWithField key={paidWith} id="rc-paid-with" cards={cards} methodColors={methodColors} date={today} defaultValue={paidWith} showStatement={false} />
+          <PaidWithField key={paidWith} id="rc-paid-with" cards={cards} methodColors={methodColors} date={start} defaultValue={paidWith} showStatement={false} followsCutoff={unit === "month"} />
         </div>
       )}
 
@@ -358,7 +360,8 @@ function RecurringForm({ categories, cards, methodColors, currency, today, rule,
             name="unit"
             aria-label="Unit"
             options={GRANULARITIES.map((u) => ({ value: u, label: UNIT_LABELS[u][plural ? 1 : 0] }))}
-            defaultValue={rule?.unit ?? "month"}
+            value={unit}
+            onChange={setUnit}
           />
         </div>
       </fieldset>
@@ -372,7 +375,8 @@ function RecurringForm({ categories, cards, methodColors, currency, today, rule,
             id="rc-start"
             name="start"
             required
-            defaultValue={rule ? (rule.nextDate ?? today) : today}
+            value={start}
+            onChange={setStart}
             aria-describedby={rule ? "rc-start-hint" : undefined}
           />
         </div>

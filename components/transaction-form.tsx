@@ -94,6 +94,7 @@ export function TransactionForm({ categories, cards, methodColors, currency, dat
             defaultValue={paidWith}
             defaultStatement={transaction?.statementDate}
             showStatement={!repeat}
+            followsCutoff={repeat === "month"}
           />
         </div>
       )}
