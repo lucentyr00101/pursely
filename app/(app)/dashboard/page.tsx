@@ -44,7 +44,7 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
     ai ? getInsight(ledger.ledgerId) : null,
     listCards(ledger.ledgerId, { includeArchived: true }),
   ]);
-  const { currency } = settings;
+  const { currency, methodColors } = settings;
   const net = summary.income - summary.expense;
   const { scheduled } = summary;
   const projectedNet = net + scheduled.income - scheduled.expense;
@@ -61,7 +61,7 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
         className=""
         title={`Hi, ${ledger.user.name.split(" ")[0]}`}
         description="Here's how your money moved."
-        actions={<AddTransactionButton categories={categories} cards={cards} currency={currency} date={today} canEdit={ledger.role !== "viewer"} />}
+        actions={<AddTransactionButton categories={categories} cards={cards} methodColors={methodColors} currency={currency} date={today} canEdit={ledger.role !== "viewer"} />}
       />
 
       {ai && <InsightCard initial={insight} />}

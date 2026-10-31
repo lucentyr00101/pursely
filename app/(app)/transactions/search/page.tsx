@@ -86,7 +86,7 @@ async function Results({ searchParams }: { searchParams: PageProps<"/transaction
     ledger.householdId ? getHousehold(ledger.householdId) : null,
     listCards(ledger.ledgerId, { includeArchived: true }),
   ]);
-  const { currency } = settings;
+  const { currency, methodColors } = settings;
   const canEdit = ledger.role !== "viewer";
   const shared = household && household.members.length > 1;
   const authors = shared ? await listUsers(result.transactions.map((t) => t.createdBy)) : undefined;
@@ -121,6 +121,7 @@ async function Results({ searchParams }: { searchParams: PageProps<"/transaction
               transactions={result.transactions}
               categories={categories}
               cards={cards}
+              methodColors={methodColors}
               currency={currency}
               canEdit={canEdit}
               authors={authors}

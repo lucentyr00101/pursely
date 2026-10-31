@@ -7,7 +7,7 @@ import { removeTransaction } from "@/app/actions";
 import type { CategoryNode, PaymentCard, Transaction } from "@/lib/data";
 import { formatDate } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
-import { methodLabel } from "@/lib/statements";
+import { methodColor, methodLabel, onMethodColor, type MethodColors } from "@/lib/statements";
 import { CategoryIcon } from "./category-icon";
 import { Modal } from "./modal";
 import { TransactionForm } from "./transaction-form";
@@ -26,10 +26,11 @@ export function buildLookup(categories: CategoryNode[]): Lookup {
 
 type Authors = Record<string, { name: string; image: string | null }>;
 
-export function TransactionList({ transactions, categories, cards, currency, canEdit, authors, showDates = false }: {
+export function TransactionList({ transactions, categories, cards, methodColors, currency, canEdit, authors, showDates = false }: {
   transactions: Transaction[];
   categories: CategoryNode[];
   cards: PaymentCard[];
+  methodColors: MethodColors;
   currency: string;
   canEdit: boolean;
   authors?: Authors;
@@ -50,7 +51,9 @@ export function TransactionList({ transactions, categories, cards, currency, can
           const sub = t.subcategoryId ? lookup.get(t.subcategoryId) : null;
           const isIncome = t.type === "income";
           const author = authors?.[t.createdBy];
-          const method = methodLabel(t.method, t.cardId ? cardsById.get(t.cardId) : undefined);
+          const card = t.cardId ? cardsById.get(t.cardId) : undefined;
+          const method = methodLabel(t.method, card);
+          const tagColor = t.method && methodColor(t.method, card, methodColors);
           const content = (
             <>
               <CategoryIcon icon={cat?.icon ?? "tag"} color={cat?.color ?? "#94a3b8"} />
@@ -63,8 +66,11 @@ export function TransactionList({ transactions, categories, cards, currency, can
                 {(method || t.note) && (
                   // On a narrow row the note wraps under the tag, and the tag wraps like the category name above it.
                   <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm text-muted">
-                    {method && (
-                      <span className="max-w-full rounded bg-sunken px-1.5 py-0.5 text-xs break-words">
+                    {method && tagColor && (
+                      <span
+                        className="max-w-full rounded px-1.5 py-0.5 text-xs font-medium break-words"
+                        style={{ backgroundColor: tagColor, color: onMethodColor(tagColor) }}
+                      >
                         {t.method === "card" && <CreditCard className="mr-1 inline size-3 align-[-0.125em]" aria-hidden />}
                         {method}
                         {t.statementDate && (
@@ -131,6 +137,7 @@ export function TransactionList({ transactions, categories, cards, currency, can
           <TransactionForm
             categories={categories}
             cards={cards}
+            methodColors={methodColors}
             currency={currency}
             date={editing.date}
             transaction={editing}

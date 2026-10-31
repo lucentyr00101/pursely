@@ -10,7 +10,7 @@ import { CATEGORY_COLORS, ICON_KEYS } from "@/lib/category-defs";
 import { GRANULARITIES, isIsoDate, startOf } from "@/lib/dates";
 import { MAX_EVERY } from "@/lib/recurring";
 import { isCurrency, parseAmount } from "@/lib/money";
-import { isFixedMethod, type Method } from "@/lib/statements";
+import { FIXED_METHODS, isFixedMethod, METHOD_COLORS, type Method } from "@/lib/statements";
 
 export type ActionState = { ok: boolean; error?: string; at?: number };
 
@@ -104,6 +104,12 @@ const cardSchema = z.object({
     .int("Pick a cutoff day from 1 to 31.")
     .min(1, "Pick a cutoff day from 1 to 31.")
     .max(31, "Pick a cutoff day from 1 to 31."),
+  color: z.enum(METHOD_COLORS, "Pick a color."),
+});
+
+const methodColorSchema = z.object({
+  method: z.enum(FIXED_METHODS),
+  color: z.enum(METHOD_COLORS, "Pick a color."),
 });
 
 function firstError(error: z.ZodError) {
@@ -253,6 +259,15 @@ export async function archiveCardAction(id: string): Promise<ActionState> {
   if (isFailure(ctx)) return ctx;
   const error = await data.archiveCard(ctx.ledgerId, id);
   return error ? fail(error) : done();
+}
+
+export async function saveMethodColor(_: ActionState, formData: FormData): Promise<ActionState> {
+  const ctx = await editorContext();
+  if (isFailure(ctx)) return ctx;
+  const parsed = methodColorSchema.safeParse(fields(formData));
+  if (!parsed.success) return fail(firstError(parsed.error));
+  await data.setMethodColor(ctx.ledgerId, parsed.data.method, parsed.data.color);
+  return done();
 }
 
 // ---------- Budgets ----------

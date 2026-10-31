@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Repeat } from "lucide-react";
 import { saveTransaction, type ActionState } from "@/app/actions";
 import type { CategoryNode, PaymentCard, Transaction } from "@/lib/data";
+import type { MethodColors } from "@/lib/statements";
 import type { TxType } from "@/lib/category-defs";
 import type { Granularity } from "@/lib/dates";
 import { centsToInput } from "@/lib/money";
@@ -21,9 +22,10 @@ const REPEAT_OPTIONS: SelectOption<"" | Granularity>[] = [
   { value: "year", label: "Yearly" },
 ];
 
-export function TransactionForm({ categories, cards, currency, date, transaction, onDone }: {
+export function TransactionForm({ categories, cards, methodColors, currency, date, transaction, onDone }: {
   categories: CategoryNode[];
   cards: PaymentCard[];
+  methodColors: MethodColors;
   currency: string;
   date: string;
   transaction?: Transaction;
@@ -87,6 +89,7 @@ export function TransactionForm({ categories, cards, currency, date, transaction
             key={paidWith}
             id="tx-paid-with"
             cards={cards}
+            methodColors={methodColors}
             date={txDate}
             defaultValue={paidWith}
             defaultStatement={transaction?.statementDate}

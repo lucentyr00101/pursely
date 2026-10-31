@@ -1,32 +1,22 @@
 "use client";
 
 import { useState, useSyncExternalStore, type KeyboardEvent } from "react";
-import { Banknote, CircleEllipsis, CreditCard, Smartphone, Wallet, type LucideIcon } from "lucide-react";
 import type { PaymentCard } from "@/lib/data";
 import { formatDate } from "@/lib/dates";
-import { cardLabel, FIXED_METHODS, isFixedMethod, METHOD_LABELS, ordinal, statementChoices, type FixedMethod } from "@/lib/statements";
+import { cardLabel, FIXED_METHODS, isFixedMethod, METHOD_LABELS, ordinal, statementChoices, type MethodColors } from "@/lib/statements";
+import { MethodIcon } from "./method-icon";
 import { Select, type SelectOption } from "./select";
 
 /** The method last used for a new expense on this device. */
 export const PAID_WITH_KEY = "pursely.paidWith";
 
-const METHOD_ICONS: Record<FixedMethod, LucideIcon> = { cash: Banknote, gcash: Smartphone, maya: Wallet, others: CircleEllipsis };
-
-function MethodIcon({ icon: Icon }: { icon: LucideIcon }) {
-  return (
-    <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-sunken text-muted">
-      <Icon className="size-4" aria-hidden />
-    </span>
-  );
-}
-
 /** Active cards in the order they were added, then the fixed methods. An archived card shows only when it is `keep`. */
-export function paidWithOptions(cards: PaymentCard[], keep?: string | null): SelectOption[] {
+export function paidWithOptions(cards: PaymentCard[], methodColors: MethodColors, keep?: string | null): SelectOption[] {
   return [
     ...cards
       .filter((c) => !c.archived || c.id === keep)
-      .map((c) => ({ value: c.id, label: cardLabel(c), icon: <MethodIcon icon={CreditCard} /> })),
-    ...FIXED_METHODS.map((m) => ({ value: m, label: METHOD_LABELS[m], icon: <MethodIcon icon={METHOD_ICONS[m]} /> })),
+      .map((c) => ({ value: c.id, label: cardLabel(c), icon: <MethodIcon method="card" color={c.color} /> })),
+    ...FIXED_METHODS.map((m) => ({ value: m, label: METHOD_LABELS[m], icon: <MethodIcon method={m} color={methodColors[m]} /> })),
   ];
 }
 
@@ -52,9 +42,10 @@ export function useRememberedPaidWith(cards: PaymentCard[]): string | null {
  * applies while the card and date are the ones the form opened with; changing either goes back to
  * the automatic statement.
  */
-export function PaidWithField({ id, cards, date, defaultValue, defaultStatement, showStatement }: {
+export function PaidWithField({ id, cards, methodColors, date, defaultValue, defaultStatement, showStatement }: {
   id: string;
   cards: PaymentCard[];
+  methodColors: MethodColors;
   date: string;
   defaultValue: string;
   defaultStatement?: string | null;
@@ -70,7 +61,7 @@ export function PaidWithField({ id, cards, date, defaultValue, defaultStatement,
       <label htmlFor={id} className="label">
         Paid with
       </label>
-      <Select id={id} name="paidWith" options={paidWithOptions(cards, defaultValue)} value={value} onChange={setValue} placeholder="Not set" />
+      <Select id={id} name="paidWith" options={paidWithOptions(cards, methodColors, defaultValue)} value={value} onChange={setValue} placeholder="Not set" />
       {showStatement && card && (
         <StatementLine key={`${card.id} ${date}`} card={card} date={date} initial={original ? (defaultStatement ?? null) : null} />
       )}

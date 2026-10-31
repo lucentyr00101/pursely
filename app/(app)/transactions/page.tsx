@@ -34,7 +34,7 @@ async function Daily({ searchParams }: { searchParams: PageProps<"/transactions"
     dailyTotals(ledger.ledgerId, weekStart, addDays(weekStart, 6)),
     listCards(ledger.ledgerId, { includeArchived: true }),
   ]);
-  const { currency } = settings;
+  const { currency, methodColors } = settings;
   const canEdit = ledger.role !== "viewer";
   let authors: Awaited<ReturnType<typeof listUsers>> | undefined;
   if (ledger.householdId) {
@@ -68,7 +68,7 @@ async function Daily({ searchParams }: { searchParams: PageProps<"/transactions"
                 Today
               </Link>
             )}
-            <AddTransactionButton categories={categories} cards={cards} currency={currency} date={date} canEdit={canEdit} />
+            <AddTransactionButton categories={categories} cards={cards} methodColors={methodColors} currency={currency} date={date} canEdit={canEdit} />
           </div>
         }
       />
@@ -125,7 +125,7 @@ async function Daily({ searchParams }: { searchParams: PageProps<"/transactions"
 
       <Card title="Transactions">
         {transactions.length ? (
-          <TransactionList transactions={transactions} categories={categories} cards={cards} currency={currency} canEdit={canEdit} authors={authors} />
+          <TransactionList transactions={transactions} categories={categories} cards={cards} methodColors={methodColors} currency={currency} canEdit={canEdit} authors={authors} />
         ) : (
           <EmptyState icon={<Receipt className="size-8" aria-hidden />} title="Nothing logged for this day">
             {canEdit && (

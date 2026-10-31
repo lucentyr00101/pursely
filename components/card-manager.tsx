@@ -1,19 +1,34 @@
 "use client";
 
 import { useActionState, useCallback, useEffect, useState, useTransition } from "react";
-import { CreditCard, LoaderCircle, Pencil, Plus } from "lucide-react";
-import { archiveCardAction, saveCard, type ActionState } from "@/app/actions";
+import { LoaderCircle, Pencil, Plus } from "lucide-react";
+import { archiveCardAction, saveCard, saveMethodColor, type ActionState } from "@/app/actions";
 import type { PaymentCard } from "@/lib/data";
-import { ordinal } from "@/lib/statements";
+import {
+  FIXED_METHODS,
+  METHOD_COLOR_NAMES,
+  METHOD_COLORS,
+  METHOD_LABELS,
+  nextCardColor,
+  ordinal,
+  type FixedMethod,
+  type MethodColor,
+  type MethodColors,
+} from "@/lib/statements";
+import { MethodIcon } from "./method-icon";
 import { Modal } from "./modal";
 import { Select, type SelectOption } from "./select";
 import { FormError } from "./ui";
 
-type Dialog = { kind: "create" } | { kind: "edit"; card: PaymentCard } | { kind: "archive"; card: PaymentCard };
+type Dialog =
+  | { kind: "create" }
+  | { kind: "edit"; card: PaymentCard }
+  | { kind: "archive"; card: PaymentCard }
+  | { kind: "method"; method: FixedMethod };
 
 const CUTOFF_OPTIONS: SelectOption[] = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: ordinal(i + 1) }));
 
-export function CardManager({ cards, canEdit }: { cards: PaymentCard[]; canEdit: boolean }) {
+export function CardManager({ cards, methodColors, canEdit }: { cards: PaymentCard[]; methodColors: MethodColors; canEdit: boolean }) {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const close = useCallback(() => setDialog(null), []);
   const active = cards.filter((c) => !c.archived);
@@ -25,34 +40,46 @@ export function CardManager({ cards, canEdit }: { cards: PaymentCard[]; canEdit:
         ? "Edit card"
         : dialog?.kind === "archive"
           ? `Archive ${dialog.card.name}?`
-          : "";
+          : dialog?.kind === "method"
+            ? `Edit ${METHOD_LABELS[dialog.method]}`
+            : "";
 
   return (
     <>
-      {active.length > 0 ? (
-        <ul className="divide-y divide-line">
-          {active.map((card) => (
-            <li key={card.id} className="flex items-center gap-3 py-2">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-sunken text-muted">
-                <CreditCard className="size-5" aria-hidden />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{card.name}</p>
-                <p className="tabular text-sm text-subtle">
-                  ••{card.last4} · cutoff {ordinal(card.cutoffDay)}
-                </p>
-              </div>
-              {canEdit && (
-                <button type="button" className="icon-btn -mr-2" aria-label={`Edit ${card.name}`} onClick={() => setDialog({ kind: "edit", card })}>
-                  <Pencil className="size-4" aria-hidden />
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm text-muted">No cards yet.</p>
-      )}
+      <ul className="divide-y divide-line">
+        {active.map((card) => (
+          <li key={card.id} className="flex items-center gap-3 py-2">
+            <MethodIcon method="card" color={card.color} size="md" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium">{card.name}</p>
+              <p className="tabular text-sm text-subtle">
+                ••{card.last4} · cutoff {ordinal(card.cutoffDay)}
+              </p>
+            </div>
+            {canEdit && (
+              <button type="button" className="icon-btn -mr-2" aria-label={`Edit ${card.name}`} onClick={() => setDialog({ kind: "edit", card })}>
+                <Pencil className="size-4" aria-hidden />
+              </button>
+            )}
+          </li>
+        ))}
+        {FIXED_METHODS.map((method) => (
+          <li key={method} className="flex items-center gap-3 py-2">
+            <MethodIcon method={method} color={methodColors[method]} size="md" />
+            <p className="min-w-0 flex-1 truncate font-medium">{METHOD_LABELS[method]}</p>
+            {canEdit && (
+              <button
+                type="button"
+                className="icon-btn -mr-2"
+                aria-label={`Edit ${METHOD_LABELS[method]}`}
+                onClick={() => setDialog({ kind: "method", method })}
+              >
+                <Pencil className="size-4" aria-hidden />
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
 
       {canEdit && (
         <button type="button" className="btn btn-primary mt-4" onClick={() => setDialog({ kind: "create" })}>
@@ -60,22 +87,65 @@ export function CardManager({ cards, canEdit }: { cards: PaymentCard[]; canEdit:
           Add card
         </button>
       )}
-      <p className="mt-4 text-sm text-subtle">Cash, GCash, Maya and Others are always available.</p>
 
       <Modal open={dialog !== null} onClose={close} title={title}>
-        {dialog?.kind === "create" && <CardForm onDone={close} />}
+        {dialog?.kind === "create" && <CardForm defaultColor={nextCardColor(active, methodColors)} onDone={close} />}
         {dialog?.kind === "edit" && (
-          <CardForm card={dialog.card} onDone={close} onArchive={() => setDialog({ kind: "archive", card: dialog.card })} />
+          <CardForm card={dialog.card} defaultColor={dialog.card.color} onDone={close} onArchive={() => setDialog({ kind: "archive", card: dialog.card })} />
         )}
         {dialog?.kind === "archive" && (
           <ConfirmArchive card={dialog.card} onDone={close} onCancel={() => setDialog({ kind: "edit", card: dialog.card })} />
         )}
+        {dialog?.kind === "method" && <MethodColorForm method={dialog.method} defaultColor={methodColors[dialog.method]} onDone={close} />}
       </Modal>
     </>
   );
 }
 
-function CardForm({ card, onDone, onArchive }: { card?: PaymentCard; onDone: () => void; onArchive?: () => void }) {
+/** Each swatch sits in a 44px target; the ring marks the chosen one. */
+function ColorField({ defaultColor }: { defaultColor: MethodColor }) {
+  const [color, setColor] = useState(defaultColor);
+  return (
+    <fieldset>
+      <legend className="label">Color</legend>
+      <div className="flex flex-wrap">
+        {METHOD_COLORS.map((c) => (
+          <label key={c} className="flex size-11 cursor-pointer items-center justify-center">
+            <input type="radio" name="color" value={c} checked={color === c} onChange={() => setColor(c)} className="peer sr-only" />
+            <span
+              className="block size-8 rounded-full ring-offset-2 ring-offset-surface-strong peer-checked:ring-2 peer-checked:ring-fg peer-focus-visible:outline-2 peer-focus-visible:outline-offset-4 peer-focus-visible:outline-ring"
+              style={{ backgroundColor: c }}
+            >
+              <span className="sr-only">{METHOD_COLOR_NAMES[c]}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function MethodColorForm({ method, defaultColor, onDone }: { method: FixedMethod; defaultColor: MethodColor; onDone: () => void }) {
+  const [state, action, pending] = useActionState<ActionState, FormData>(saveMethodColor, { ok: false });
+
+  useEffect(() => {
+    if (state.ok) onDone();
+  }, [state, onDone]);
+
+  return (
+    <form action={action} className="flex flex-col gap-4">
+      <input type="hidden" name="method" value={method} />
+      <ColorField defaultColor={defaultColor} />
+      <FormError message={state.error} />
+      <button type="submit" disabled={pending} className="btn btn-primary w-full">
+        {pending && <LoaderCircle className="size-4 animate-spin" aria-hidden />}
+        Save changes
+      </button>
+    </form>
+  );
+}
+
+function CardForm({ card, defaultColor, onDone, onArchive }: { card?: PaymentCard; defaultColor: MethodColor; onDone: () => void; onArchive?: () => void }) {
   const [state, action, pending] = useActionState<ActionState, FormData>(saveCard, { ok: false });
 
   useEffect(() => {
@@ -124,6 +194,7 @@ function CardForm({ card, onDone, onArchive }: { card?: PaymentCard; onDone: () 
           Purchases up to and including this day go on that month&apos;s statement.
         </p>
       </div>
+      <ColorField defaultColor={defaultColor} />
 
       <FormError message={state.error} />
       <button type="submit" disabled={pending} className="btn btn-primary w-full">

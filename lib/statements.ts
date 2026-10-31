@@ -14,6 +14,42 @@ export function isFixedMethod(value: unknown): value is FixedMethod {
   return typeof value === "string" && (FIXED_METHODS as readonly string[]).includes(value);
 }
 
+/**
+ * Colors a payment method can have. Tags are solid, so each one is paired with text in
+ * `onMethodColor` and that pairing reaches at least 5:1. Check a new color before adding it.
+ */
+export const METHOD_COLORS = [
+  "#1c1917", "#475569", "#b91c1c", "#c2410c", "#eab308", "#84cc16",
+  "#15803d", "#0f766e", "#2563eb", "#4338ca", "#7e22ce", "#be185d",
+] as const;
+export type MethodColor = (typeof METHOD_COLORS)[number];
+export type MethodColors = Record<FixedMethod, MethodColor>;
+
+export const METHOD_COLOR_NAMES: Record<MethodColor, string> = {
+  "#1c1917": "Charcoal", "#475569": "Slate", "#b91c1c": "Red", "#c2410c": "Orange", "#eab308": "Yellow", "#84cc16": "Lime",
+  "#15803d": "Green", "#0f766e": "Teal", "#2563eb": "Blue", "#4338ca": "Indigo", "#7e22ce": "Purple", "#be185d": "Pink",
+};
+
+/** Cards saved before colors existed have none stored and read as this. */
+export const DEFAULT_CARD_COLOR: MethodColor = "#1c1917";
+export const DEFAULT_METHOD_COLORS: MethodColors = { cash: "#eab308", gcash: "#2563eb", maya: "#15803d", others: "#475569" };
+
+/** The text color that stays readable on a solid `color`. */
+export function onMethodColor(color: MethodColor): string {
+  return color === "#eab308" || color === "#84cc16" ? "var(--fg)" : "var(--on-primary)";
+}
+
+/** The color of a transaction's method. A card that can't be found gets the default. */
+export function methodColor(method: Method, card: { color: MethodColor } | undefined, colors: MethodColors): MethodColor {
+  return method === "card" ? (card?.color ?? DEFAULT_CARD_COLOR) : colors[method];
+}
+
+/** The first color no other method uses, for a new card. The first color once they are all taken. */
+export function nextCardColor(cards: { color: MethodColor }[], colors: MethodColors): MethodColor {
+  const used = new Set<MethodColor>([...cards.map((c) => c.color), ...Object.values(colors)]);
+  return METHOD_COLORS.find((c) => !used.has(c)) ?? METHOD_COLORS[0];
+}
+
 /** The cutoff date in the month containing `month`, clamped to that month's last day. */
 export function cutoffIn(month: string, cutoffDay: number): string {
   const [y, m] = month.split("-").map(Number);

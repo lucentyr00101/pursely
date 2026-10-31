@@ -4,6 +4,7 @@ import { Fragment, useActionState, useCallback, useEffect, useState, useTransiti
 import { CalendarClock, LoaderCircle, Pause, Pencil, Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { pauseRecurring, removeRecurring, saveRecurring, type ActionState } from "@/app/actions";
 import type { CategoryNode, PaymentCard, Recurring } from "@/lib/data";
+import type { MethodColors } from "@/lib/statements";
 import type { TxType } from "@/lib/category-defs";
 import { formatDate, GRANULARITIES, type Granularity } from "@/lib/dates";
 import { centsToInput, formatMoney } from "@/lib/money";
@@ -24,9 +25,10 @@ const UNIT_LABELS: Record<Granularity, [string, string]> = {
   year: ["year", "years"],
 };
 
-export function AddRecurringButton({ categories, cards, currency, today }: {
+export function AddRecurringButton({ categories, cards, methodColors, currency, today }: {
   categories: CategoryNode[];
   cards: PaymentCard[];
+  methodColors: MethodColors;
   currency: string;
   today: string;
 }) {
@@ -39,7 +41,7 @@ export function AddRecurringButton({ categories, cards, currency, today }: {
         New recurring
       </button>
       <Modal open={open} onClose={close} title="New recurring entry">
-        <RecurringForm categories={categories} cards={cards} currency={currency} today={today} onDone={close} />
+        <RecurringForm categories={categories} cards={cards} methodColors={methodColors} currency={currency} today={today} onDone={close} />
       </Modal>
     </>
   );
@@ -66,10 +68,11 @@ type Sort = keyof typeof SORTS;
 const endKey = (r: Recurring) => r.endDate ?? "9999-12-31";
 const monthly = (r: Recurring) => r.amount * perMonth(r.unit, r.every);
 
-export function RecurringList({ rules, categories, cards, currency, canEdit, today }: {
+export function RecurringList({ rules, categories, cards, methodColors, currency, canEdit, today }: {
   rules: Recurring[];
   categories: CategoryNode[];
   cards: PaymentCard[];
+  methodColors: MethodColors;
   currency: string;
   canEdit: boolean;
   today: string;
@@ -239,7 +242,7 @@ export function RecurringList({ rules, categories, cards, currency, canEdit, tod
       <Modal open={editing !== null} onClose={closeEdit} title="Edit recurring entry">
         {editing && (
           <>
-            <RecurringForm categories={categories} cards={cards} currency={currency} today={today} rule={editing} onDone={closeEdit} />
+            <RecurringForm categories={categories} cards={cards} methodColors={methodColors} currency={currency} today={today} rule={editing} onDone={closeEdit} />
             <div className="mt-3 flex flex-col gap-3 border-t border-line pt-3">
               <FormError message={editError} />
               <div className="grid grid-cols-2 gap-3">
@@ -279,9 +282,10 @@ export function RecurringList({ rules, categories, cards, currency, canEdit, tod
   );
 }
 
-function RecurringForm({ categories, cards, currency, today, rule, onDone }: {
+function RecurringForm({ categories, cards, methodColors, currency, today, rule, onDone }: {
   categories: CategoryNode[];
   cards: PaymentCard[];
+  methodColors: MethodColors;
   currency: string;
   today: string;
   rule?: Recurring;
@@ -328,7 +332,7 @@ function RecurringForm({ categories, cards, currency, today, rule, onDone }: {
       {/* Hidden rather than removed for income, so switching back keeps the choice. The server ignores it for income. */}
       {paidWith !== null && (
         <div hidden={type !== "expense"}>
-          <PaidWithField key={paidWith} id="rc-paid-with" cards={cards} date={today} defaultValue={paidWith} showStatement={false} />
+          <PaidWithField key={paidWith} id="rc-paid-with" cards={cards} methodColors={methodColors} date={today} defaultValue={paidWith} showStatement={false} />
         </div>
       )}
 

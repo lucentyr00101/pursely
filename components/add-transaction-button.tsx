@@ -3,12 +3,14 @@
 import { useCallback, useState } from "react";
 import { Plus } from "lucide-react";
 import type { CategoryNode, PaymentCard } from "@/lib/data";
+import type { MethodColors } from "@/lib/statements";
 import { Modal } from "./modal";
 import { TransactionForm } from "./transaction-form";
 
-export function AddTransactionButton({ categories, cards, currency, date, canEdit }: {
+export function AddTransactionButton({ categories, cards, methodColors, currency, date, canEdit }: {
   categories: CategoryNode[];
   cards: PaymentCard[];
+  methodColors: MethodColors;
   currency: string;
   date: string;
   canEdit: boolean;
@@ -28,7 +30,7 @@ export function AddTransactionButton({ categories, cards, currency, date, canEdi
         <span className="sr-only lg:not-sr-only">Add transaction</span>
       </button>
       <Modal open={open} onClose={close} title="New transaction">
-        <TransactionForm categories={categories} cards={cards} currency={currency} date={date} onDone={close} />
+        <TransactionForm categories={categories} cards={cards} methodColors={methodColors} currency={currency} date={date} onDone={close} />
       </Modal>
     </>
   );

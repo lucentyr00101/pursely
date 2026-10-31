@@ -38,6 +38,8 @@
 
 **Color Notes:** Warm gold & plum, light only (chosen 2026-10-17 after trying sage & cream, blush & lavender, and monochrome + blue; replaced the original dark navy/blue). Chart pair passes the dataviz validator (CVD ΔE 34.1, all checks pass). White on primary is 5.0:1. Subtle foreground was darkened from `#78716C` (4.49:1 on the page, 4.35:1 in fields) to `#6F6862` (4.7:1 or better) on 2026-10-22. Inputs use `--border-field` for a 3:1 outline against cards and the page (WCAG 1.4.11); `--border-strong` stays decorative.
 
+**Payment method colors:** Solid tags and icons use `METHOD_COLORS` in `lib/statements.ts`. Yellow `#EAB308` and lime `#84CC16` take `--fg` text; the other ten take white. Every pairing reaches at least 5:1 (checked 2026-10-31).
+
 **Typography override:** Inter for everything (the generated Caveat/Quicksand pairing below did not suit a finance app).
 
 ### Typography

@@ -55,10 +55,10 @@ async function CurrencyCard() {
 
 async function CardsSection() {
   const ledger = await getLedger();
-  const cards = await listCards(ledger.ledgerId);
+  const [cards, { methodColors }] = await Promise.all([listCards(ledger.ledgerId), getSettings(ledger.ledgerId)]);
   return (
-    <Card title="Cards" description="Credit cards you pay with. Purchases count in the month their statement closes.">
-      <CardManager cards={cards} canEdit={ledger.role !== "viewer"} />
+    <Card title="Payment methods" description="The color shows on each transaction. Purchases on a card count in the month their statement closes.">
+      <CardManager cards={cards} methodColors={methodColors} canEdit={ledger.role !== "viewer"} />
     </Card>
   );
 }

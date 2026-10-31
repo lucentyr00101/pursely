@@ -5,7 +5,17 @@ import { SYSTEM_CATEGORIES, type IconKey, type TxType } from "./category-defs";
 import { addMonths, buckets, startOf, toIso, toUtc, type Granularity, type Range } from "./dates";
 import { DEFAULT_CURRENCY, formatMoney } from "./money";
 import { monthlyTotals, occurrence } from "./recurring";
-import { methodLabel, statementChoices, statementFor, type Method } from "./statements";
+import {
+  DEFAULT_CARD_COLOR,
+  DEFAULT_METHOD_COLORS,
+  methodLabel,
+  statementChoices,
+  statementFor,
+  type FixedMethod,
+  type Method,
+  type MethodColor,
+  type MethodColors,
+} from "./statements";
 
 // ---------- Documents ----------
 
@@ -70,7 +80,8 @@ type RecurringDoc = {
  * per-month history) applies to every month. A null amount ends the budget.
  */
 type BudgetDoc = { _id: ObjectId; ledgerId: string; categoryId: ObjectId; from?: string | null; amount: number | null };
-type SettingsDoc = { _id: string; currency: string }; // _id = ledgerId
+// _id = ledgerId. A ledger that only changed its method colors has no currency yet.
+type SettingsDoc = { _id: string; currency?: string; methodColors?: Partial<MethodColors> };
 /** A credit card. Archived rather than deleted, so purchases keep their card. Never holds more than the last 4 digits. */
 type CardDoc = {
   _id: ObjectId;
@@ -78,6 +89,7 @@ type CardDoc = {
   name: string;
   last4: string;
   cutoffDay: number; // 1-31, the day its statement closes
+  color?: MethodColor; // missing on cards saved before colors existed
   archivedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -232,15 +244,19 @@ export function ensureSetup(): Promise<void> {
 
 // ---------- Settings ----------
 
-export type Settings = { currency: string };
+export type Settings = { currency: string; methodColors: MethodColors };
 
 export async function getSettings(ledgerId: string): Promise<Settings> {
   const doc = await settings.findOne({ _id: ledgerId });
-  return { currency: doc?.currency ?? DEFAULT_CURRENCY };
+  return { currency: doc?.currency ?? DEFAULT_CURRENCY, methodColors: { ...DEFAULT_METHOD_COLORS, ...doc?.methodColors } };
 }
 
-export async function updateSettings(ledgerId: string, patch: Settings): Promise<void> {
+export async function updateSettings(ledgerId: string, patch: { currency: string }): Promise<void> {
   await settings.updateOne({ _id: ledgerId }, { $set: patch }, { upsert: true });
+}
+
+export async function setMethodColor(ledgerId: string, method: FixedMethod, color: MethodColor): Promise<void> {
+  await settings.updateOne({ _id: ledgerId }, { $set: { [`methodColors.${method}`]: color } }, { upsert: true });
 }
 
 // ---------- Insights ----------
@@ -400,11 +416,18 @@ function escapeRegex(text: string) {
 
 // ---------- Cards ----------
 
-export type PaymentCard = { id: string; name: string; last4: string; cutoffDay: number; archived: boolean };
-export type CardInput = { name: string; last4: string; cutoffDay: number };
+export type PaymentCard = { id: string; name: string; last4: string; cutoffDay: number; color: MethodColor; archived: boolean };
+export type CardInput = { name: string; last4: string; cutoffDay: number; color: MethodColor };
 
 function toPaymentCard(doc: CardDoc): PaymentCard {
-  return { id: doc._id.toHexString(), name: doc.name, last4: doc.last4, cutoffDay: doc.cutoffDay, archived: doc.archivedAt !== null };
+  return {
+    id: doc._id.toHexString(),
+    name: doc.name,
+    last4: doc.last4,
+    cutoffDay: doc.cutoffDay,
+    color: doc.color ?? DEFAULT_CARD_COLOR,
+    archived: doc.archivedAt !== null,
+  };
 }
 
 export async function listCards(ledgerId: string, { includeArchived = false }: { includeArchived?: boolean } = {}): Promise<PaymentCard[]> {
@@ -1332,7 +1355,7 @@ export async function deleteLedgerData(ledgerId: string, session?: ClientSession
 /**
  * Move a ledger's categories, transactions, recurring rules and budgets into another ledger. An active custom category
  * matching an active one visible there (same type, same parent, name ignoring case) is folded into it
- * and archived. The target's budgets and currency win over the source's.
+ * and archived. The target's budgets, currency and method colors win over the source's; cards keep their own color.
  */
 export async function mergeLedgerInto(fromLedgerId: string, toLedgerId: string, session?: ClientSession): Promise<void> {
   const now = new Date();
