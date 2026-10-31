@@ -10,6 +10,7 @@ import {
   DEFAULT_METHOD_COLORS,
   methodLabel,
   cutoffIn,
+  isFixedMethod,
   statementChoices,
   statementFor,
   type FixedMethod,
@@ -691,6 +692,7 @@ export type TransactionSearch = {
   type?: TxType;
   categoryId?: string; // top-level or subcategory
   createdBy?: string;
+  paidWith?: string; // a fixed method, a card id, or "none" for expenses with no method set
   min?: number; // cents
   max?: number;
   from?: string;
@@ -713,6 +715,9 @@ export async function searchTransactions(ledgerId: string, search: TransactionSe
     const id = new ObjectId(search.categoryId);
     and.push({ $or: [{ categoryId: id }, { subcategoryId: id }] });
   }
+  if (search.paidWith === "none") and.push({ type: "expense", method: { $exists: false } });
+  else if (isFixedMethod(search.paidWith)) and.push({ method: search.paidWith });
+  else if (typeof search.paidWith === "string" && ObjectId.isValid(search.paidWith)) and.push({ cardId: new ObjectId(search.paidWith) });
   if (search.min !== undefined || search.max !== undefined) {
     and.push({ amount: { ...(search.min !== undefined && { $gte: search.min }), ...(search.max !== undefined && { $lte: search.max }) } });
   }

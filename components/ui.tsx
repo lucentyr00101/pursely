@@ -44,6 +44,34 @@ export function Skeleton({ className = "" }: { className?: string }) {
   return <div aria-hidden className={`animate-pulse rounded-xl bg-sunken ${className}`} />;
 }
 
+/** Stands in for a page's Spent, Earned and Net stats and its transaction list while they load. */
+export function TransactionsSkeleton({ label }: { label: string }) {
+  return (
+    <div role="status" aria-busy aria-label={label}>
+      <div className="mb-6 grid gap-2 sm:grid-cols-3 sm:gap-3">
+        {["Spent", "Earned", "Net"].map((stat) => (
+          // Matches Stat, so the labels hold still when the amounts arrive.
+          <div key={stat} className="glass flex min-w-0 items-center justify-between gap-3 rounded-xl px-4 py-2.5 sm:block sm:p-4">
+            <p className="text-sm font-medium text-muted">{stat}</p>
+            <Skeleton className="h-6 w-20 rounded-lg sm:mt-1 sm:h-7 sm:w-28" />
+          </div>
+        ))}
+      </div>
+      <Card title="Transactions">
+        <ul className="divide-y divide-line">
+          {[0, 1, 2].map((row) => (
+            <li key={row} className="flex items-center gap-3 py-3">
+              <Skeleton className="size-10 shrink-0 rounded-lg" />
+              <Skeleton className="h-5 w-40 max-w-1/2 rounded-lg" />
+              <Skeleton className="ml-auto h-5 w-20 shrink-0 rounded-lg" />
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </div>
+  );
+}
+
 export function EmptyState({ icon, title, children }: { icon: ReactNode; title: string; children?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-center">

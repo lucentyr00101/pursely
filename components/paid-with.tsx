@@ -10,12 +10,10 @@ import { Select, type SelectOption } from "./select";
 /** The method last used for a new expense on this device. */
 export const PAID_WITH_KEY = "pursely.paidWith";
 
-/** Active cards in the order they were added, then the fixed methods. An archived card shows only when it is `keep`. */
-export function paidWithOptions(cards: PaymentCard[], methodColors: MethodColors, keep?: string | null): SelectOption[] {
+/** The given cards in the order they were added, then the fixed methods. */
+export function paidWithOptions(cards: PaymentCard[], methodColors: MethodColors): SelectOption[] {
   return [
-    ...cards
-      .filter((c) => !c.archived || c.id === keep)
-      .map((c) => ({ value: c.id, label: cardLabel(c), icon: <MethodIcon method="card" color={c.color} /> })),
+    ...cards.map((c) => ({ value: c.id, label: cardLabel(c), icon: <MethodIcon method="card" color={c.color} /> })),
     ...FIXED_METHODS.map((m) => ({ value: m, label: METHOD_LABELS[m], icon: <MethodIcon method={m} color={methodColors[m]} /> })),
   ];
 }
@@ -65,7 +63,8 @@ export function PaidWithField({ id, cards, methodColors, date, defaultValue, def
       <Select
         id={id}
         name="paidWith"
-        options={paidWithOptions(cards, methodColors, defaultValue)}
+        // An archived card shows only when the entry already uses it.
+        options={paidWithOptions(cards.filter((c) => !c.archived || c.id === defaultValue), methodColors)}
         value={value}
         onChange={(next) => {
           setValue(next);

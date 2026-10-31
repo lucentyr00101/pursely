@@ -10,7 +10,7 @@ import { addDays, formatDate, isIsoDate, startOf } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { AddTransactionButton } from "./add-transaction-button";
 import { DatePicker } from "./date-picker";
-import { Card, PageHeader, Skeleton } from "./ui";
+import { PageHeader, Skeleton, TransactionsSkeleton } from "./ui";
 
 /**
  * The daily log's controls, which move to the picked day at once. A change of `?date=` keeps the
@@ -143,34 +143,7 @@ export function DailyView({ date, today, week, categories, cards, methodColors, 
         })}
       </nav>
 
-      {pending ? <DayContentSkeleton /> : children}
+      {pending ? <TransactionsSkeleton label="Loading this day" /> : children}
     </>
-  );
-}
-
-function DayContentSkeleton() {
-  return (
-    <div role="status" aria-busy aria-label="Loading this day">
-      <div className="mb-6 grid gap-2 sm:grid-cols-3 sm:gap-3">
-        {["Spent", "Earned", "Net"].map((label) => (
-          // Matches Stat, so the labels hold still when the amounts arrive.
-          <div key={label} className="glass flex min-w-0 items-center justify-between gap-3 rounded-xl px-4 py-2.5 sm:block sm:p-4">
-            <p className="text-sm font-medium text-muted">{label}</p>
-            <Skeleton className="h-6 w-20 rounded-lg sm:mt-1 sm:h-7 sm:w-28" />
-          </div>
-        ))}
-      </div>
-      <Card title="Transactions">
-        <ul className="divide-y divide-line">
-          {[0, 1, 2].map((row) => (
-            <li key={row} className="flex items-center gap-3 py-3">
-              <Skeleton className="size-10 shrink-0 rounded-lg" />
-              <Skeleton className="h-5 w-40 max-w-1/2 rounded-lg" />
-              <Skeleton className="ml-auto h-5 w-20 shrink-0 rounded-lg" />
-            </li>
-          ))}
-        </ul>
-      </Card>
-    </div>
   );
 }

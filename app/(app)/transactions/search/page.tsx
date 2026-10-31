@@ -7,9 +7,10 @@ import { getSettings, listCards, listCategories, searchTransactions, type Transa
 import { getHousehold, listUsers } from "@/lib/household";
 import { isIsoDate } from "@/lib/dates";
 import { formatMoney, parseAmount } from "@/lib/money";
+import { isFixedMethod } from "@/lib/statements";
 import { SearchFilters, type SearchValues } from "@/components/search-filters";
 import { TransactionList } from "@/components/transaction-list";
-import { Card, EmptyState, PageHeader, Skeleton, Stat } from "@/components/ui";
+import { Card, EmptyState, PageHeader, Skeleton, Stat, TransactionsSkeleton } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Search" };
 
@@ -25,7 +26,7 @@ export default function SearchPage({ searchParams }: PageProps<"/transactions/se
         <ChevronLeft className="size-4" aria-hidden />
         Daily log
       </Link>
-      <PageHeader title="Search" description="Find transactions by note, category, amount or date." />
+      <PageHeader title="Search" description="Find transactions by note, category, amount, date or payment method." />
       <Suspense fallback={<SearchSkeleton />}>
         <Results searchParams={searchParams} />
       </Suspense>
@@ -44,6 +45,7 @@ function readValues(params: Params): SearchValues {
     type: one(params.type),
     category: one(params.category),
     member: one(params.member),
+    paidWith: one(params.paidWith),
     min: one(params.min),
     max: one(params.max),
     from: one(params.from),
@@ -64,6 +66,7 @@ function toSearch(v: SearchValues): TransactionSearch {
     type: v.type === "expense" || v.type === "income" ? v.type : undefined,
     categoryId: /^[0-9a-f]{24}$/.test(v.category) ? v.category : undefined,
     createdBy: v.member || undefined,
+    paidWith: v.paidWith === "none" || isFixedMethod(v.paidWith) || /^[0-9a-f]{24}$/.test(v.paidWith) ? v.paidWith : undefined,
     min,
     max,
     from,
@@ -99,9 +102,15 @@ async function Results({ searchParams }: { searchParams: PageProps<"/transaction
   const net = result.income - result.expense;
 
   return (
-    <>
-      <SearchFilters initial={values} categories={categories} members={members} currency={currency} today={today} />
-
+    <SearchFilters
+      initial={values}
+      categories={categories}
+      cards={cards}
+      methodColors={methodColors}
+      members={members}
+      currency={currency}
+      today={today}
+    >
       <div className="mb-6 grid gap-2 sm:grid-cols-3 sm:gap-3">
         <Stat label="Spent" value={formatMoney(result.expense, currency)} />
         <Stat label="Earned" value={formatMoney(result.income, currency)} />
@@ -143,20 +152,15 @@ async function Results({ searchParams }: { searchParams: PageProps<"/transaction
           </EmptyState>
         )}
       </Card>
-    </>
+    </SearchFilters>
   );
 }
 
 function SearchSkeleton() {
   return (
-    <div aria-busy aria-label="Loading search" className="flex flex-col gap-6">
-      <Skeleton className="h-16" />
-      <div className="grid gap-2 sm:grid-cols-3 sm:gap-3">
-        <Skeleton className="h-12 sm:h-20" />
-        <Skeleton className="h-12 sm:h-20" />
-        <Skeleton className="h-12 sm:h-20" />
-      </div>
-      <Skeleton className="h-72" />
-    </div>
+    <>
+      <Skeleton className="mb-6 h-16" />
+      <TransactionsSkeleton label="Loading search" />
+    </>
   );
 }
