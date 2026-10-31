@@ -1037,11 +1037,19 @@ export type Summary = {
   count: number;
   /** Card purchases made in the range on a statement that closes after it, so not in `expense`. */
   billedLater: number;
+  /**
+   * Per bucket by transaction date, unlike the totals, which put a card purchase on its statement date.
+   * Leaves out recurring payments, posted or scheduled; recurring income stays.
+   */
   series: SeriesPoint[];
+  /** The categories in `series`, which can differ from the totals' for the same reason. */
+  seriesCategories: { expense: CategoryTotal[]; income: CategoryTotal[]; scheduledExpense: CategoryTotal[]; scheduledIncome: CategoryTotal[] };
   expenseByCategory: CategoryTotal[];
+  /** `expenseByCategory` without recurring payments, for the dashboard's breakdown. */
+  oneOffExpenseByCategory: CategoryTotal[];
   incomeByCategory: CategoryTotal[];
   /** Upcoming occurrences of active recurring rules in the range, not yet transactions. */
-  scheduled: { expense: number; income: number; count: number; expenseByCategory: CategoryTotal[]; incomeByCategory: CategoryTotal[] };
+  scheduled: { expense: number; income: number; count: number };
   /** Recurring money in the range: generated transactions plus scheduled occurrences. */
   recurring: Record<TxType, { posted: number; scheduled: number; count: number }>;
 };
@@ -1049,10 +1057,13 @@ export type Summary = {
 /** Plenty for any chart; a daily rule over a decades-long custom range stops here. */
 const MAX_PROJECTED = 5000;
 
-type Row = { bucket: string; type: TxType; cat: string; sub: string | null; total: number; count: number };
+type Row = { bucket: string; type: TxType; cat: string; sub: string | null; total: number; count: number; recurring?: boolean };
 
-/** Occurrences from each active rule's next one through `to`, which generation hasn't reached yet. */
-async function projectRecurring(ledgerId: string, range: Range): Promise<Row[]> {
+/**
+ * Occurrences from each active rule's next one through `to`, which generation hasn't reached yet:
+ * `counted` follows the same rule as the totals, `dated` places each one on its own date for the series.
+ */
+async function projectRecurring(ledgerId: string, range: Range): Promise<{ counted: Row[]; dated: Row[] }> {
   const rules = await recurring.find({ ledgerId, pausedAt: null, nextDate: { $ne: null, $lte: toUtc(range.to) } }).toArray();
   const cardIds = rules.flatMap((r) => (r.method === "card" && r.cardId ? [r.cardId] : []));
   const cutoffs = new Map(
@@ -1060,7 +1071,7 @@ async function projectRecurring(ledgerId: string, range: Range): Promise<Row[]> 
       ? (await cards.find({ _id: { $in: cardIds }, ledgerId }, { projection: { cutoffDay: 1 } }).toArray()).map((c) => [c._id.toHexString(), c.cutoffDay])
       : [],
   );
-  const rows: Row[] = [];
+  const projected: { counted: Row[]; dated: Row[] } = { counted: [], dated: [] };
   for (const rule of rules) {
     const start = toIso(rule.startDate);
     const end = rule.endDate && toIso(rule.endDate);
@@ -1071,39 +1082,54 @@ async function projectRecurring(ledgerId: string, range: Range): Promise<Row[]> 
       if (date > last) break;
       // A statement never closes before its purchase, so the check above still ends the loop in time.
       const counted = cutoffDay ? statementFor(date, cutoffDay) : date;
-      if (counted < range.from || counted > range.to) continue;
-      rows.push({
-        bucket: startOf(counted, range.group),
+      const row = (on: string): Row => ({
+        bucket: startOf(on, range.group),
         type: rule.type,
         cat: rule.categoryId.toHexString(),
         sub: rule.subcategoryId?.toHexString() ?? null,
         total: rule.amount,
         count: 1,
       });
+      if (counted >= range.from && counted <= range.to) projected.counted.push(row(counted));
+      if (date >= range.from) projected.dated.push(row(date));
     }
   }
-  return rows;
+  return projected;
 }
 
 export async function getSummary(ledgerId: string, range: Range): Promise<Summary> {
-  const [rawRows, recurringRows, billedLaterRows, scheduledRows, cats] = await Promise.all([
-    transactions
-      .aggregate<{ _id: { bucket: Date; type: TxType; cat: ObjectId; sub: ObjectId | null }; total: number; count: number }>([
-        { $match: countedIn(ledgerId, range.from, range.to) },
+  const rowsOf = async (match: Filter<TransactionDoc>, on: string | { $ifNull: string[] }): Promise<Row[]> => {
+    const raw = await transactions
+      .aggregate<{ _id: { bucket: Date; type: TxType; cat: ObjectId; sub: ObjectId | null; recurring: boolean }; total: number; count: number }>([
+        { $match: match },
         {
           $group: {
             _id: {
-              bucket: { $dateTrunc: { date: { $ifNull: ["$statementDate", "$date"] }, unit: range.group, timezone: "UTC", startOfWeek: "monday" } },
+              bucket: { $dateTrunc: { date: on, unit: range.group, timezone: "UTC", startOfWeek: "monday" } },
               type: "$type",
               cat: "$categoryId",
               sub: "$subcategoryId",
+              recurring: { $ne: [{ $type: "$recurringId" }, "missing"] },
             },
             total: { $sum: "$amount" },
             count: { $sum: 1 },
           },
         },
       ])
-      .toArray(),
+      .toArray();
+    return raw.map((r) => ({
+      recurring: r._id.recurring,
+      bucket: toIso(r._id.bucket),
+      type: r._id.type,
+      cat: r._id.cat.toHexString(),
+      sub: r._id.sub?.toHexString() ?? null,
+      total: r.total,
+      count: r.count,
+    }));
+  };
+  const [rows, datedRows, recurringRows, billedLaterRows, projected, cats] = await Promise.all([
+    rowsOf(countedIn(ledgerId, range.from, range.to), { $ifNull: ["$statementDate", "$date"] }),
+    rowsOf(inRange(ledgerId, range.from, range.to), "$date"),
     transactions
       .aggregate<{ _id: TxType; total: number; count: number }>([
         { $match: countedIn(ledgerId, range.from, range.to, { recurringId: { $exists: true } }) },
@@ -1119,14 +1145,7 @@ export async function getSummary(ledgerId: string, range: Range): Promise<Summar
     projectRecurring(ledgerId, range),
     listCategories(ledgerId, { includeArchived: true }),
   ]);
-  const rows: Row[] = rawRows.map((r) => ({
-    bucket: toIso(r._id.bucket),
-    type: r._id.type,
-    cat: r._id.cat.toHexString(),
-    sub: r._id.sub?.toHexString() ?? null,
-    total: r.total,
-    count: r.count,
-  }));
+  const { counted: scheduledRows, dated: datedScheduledRows } = projected;
 
   const series = new Map<string, SeriesPoint>();
   for (const b of buckets(range.from, range.to, range.group)) {
@@ -1134,9 +1153,20 @@ export async function getSummary(ledgerId: string, range: Range): Promise<Summar
   }
   const totals = { expense: 0, income: 0, count: 0 };
   const scheduled = { expense: 0, income: 0, count: 0 };
-  for (const [list, sum, slot] of [
-    [rows, totals, (p: SeriesPoint) => p],
-    [scheduledRows, scheduled, (p: SeriesPoint) => p.scheduled],
+  for (const [list, sum] of [
+    [rows, totals],
+    [scheduledRows, scheduled],
+  ] as const) {
+    for (const r of list) {
+      sum[r.type] += r.total;
+      sum.count += r.count;
+    }
+  }
+  const seriesRows = datedRows.filter((r) => !(r.type === "expense" && r.recurring));
+  const seriesScheduledRows = datedScheduledRows.filter((r) => r.type !== "expense");
+  for (const [list, slot] of [
+    [seriesRows, (p: SeriesPoint) => p],
+    [seriesScheduledRows, (p: SeriesPoint) => p.scheduled],
   ] as const) {
     for (const r of list) {
       const point = series.get(r.bucket);
@@ -1145,8 +1175,6 @@ export async function getSummary(ledgerId: string, range: Range): Promise<Summar
         target[r.type] += r.total;
         target.byCategory[r.cat] = (target.byCategory[r.cat] ?? 0) + r.total;
       }
-      sum[r.type] += r.total;
-      sum.count += r.count;
     }
   }
 
@@ -1193,7 +1221,9 @@ export async function getSummary(ledgerId: string, range: Range): Promise<Summar
     return { expense: sorted(groups.expense), income: sorted(groups.income) };
   }
   const actual = byCategory(rows);
-  const upcoming = byCategory(scheduledRows);
+  const oneOff = byCategory(rows.filter((r) => !r.recurring));
+  const dated = byCategory(seriesRows);
+  const datedUpcoming = byCategory(seriesScheduledRows);
 
   const recurringTotals = (type: TxType) => {
     const posted = recurringRows.find((r) => r._id === type);
@@ -1209,9 +1239,16 @@ export async function getSummary(ledgerId: string, range: Range): Promise<Summar
     ...totals,
     billedLater: billedLaterRows[0]?.total ?? 0,
     series: [...series.values()],
+    seriesCategories: {
+      expense: dated.expense,
+      income: dated.income,
+      scheduledExpense: datedUpcoming.expense,
+      scheduledIncome: datedUpcoming.income,
+    },
     expenseByCategory: actual.expense,
+    oneOffExpenseByCategory: oneOff.expense,
     incomeByCategory: actual.income,
-    scheduled: { ...scheduled, expenseByCategory: upcoming.expense, incomeByCategory: upcoming.income },
+    scheduled,
     recurring: { expense: recurringTotals("expense"), income: recurringTotals("income") },
   };
 }

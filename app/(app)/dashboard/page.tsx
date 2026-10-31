@@ -116,16 +116,13 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
         <Card className="lg:col-span-3">
           <CashFlowChart
             data={summary.series}
-            expense={summary.expenseByCategory}
-            income={summary.incomeByCategory}
-            scheduledExpense={scheduled.expenseByCategory}
-            scheduledIncome={scheduled.incomeByCategory}
+            {...summary.seriesCategories}
             group={range.group}
             currency={currency}
           />
         </Card>
-        <Card title="By category" description="Select a category to see subcategories" className="lg:col-span-2">
-          <CategoryBreakdown expense={summary.expenseByCategory} income={summary.incomeByCategory} currency={currency} />
+        <Card title="By category" description="Without recurring payments. Select a category to see subcategories." className="lg:col-span-2">
+          <CategoryBreakdown expense={summary.oneOffExpenseByCategory} income={summary.incomeByCategory} currency={currency} />
         </Card>
       </div>
 

@@ -73,7 +73,7 @@ export function CashFlowChart({ data, expense, income, scheduledExpense, schedul
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="font-semibold">Cash flow</h2>
-          <p className="mt-0.5 text-sm text-muted">Per {group}</p>
+          <p className="mt-0.5 text-sm text-muted">Per {group}, by transaction date, without recurring payments</p>
         </div>
         <button
           type="button"
