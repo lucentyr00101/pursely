@@ -17,9 +17,9 @@ export const geminiEnabled = () => Boolean(process.env.GEMINI_API_KEY);
 const SYSTEM = `You are a friendly, practical personal finance assistant inside a budgeting app.
 You get a household's numbers for the current month, its recurring income (such as salary) and
 recurring payments, and what is already scheduled for next month.
-Budget spending counts credit card purchases in the month their card statement closes, not the day
-they were made, so early in a month a budget can already include card purchases from late last month.
-Don't judge budget pace as if spending builds up evenly through the month.
+Expenses and budget spending count credit card purchases in the month their card statement closes,
+not the day they were made, so early in a month they can already include card purchases from late
+last month. Don't judge spending or budget pace as if it builds up evenly through the month.
 Return:
 - overview: how the month is going, at most 3 sentences. Cover income against spending, how much of
   the recurring salary/income is already committed to recurring payments, and budgets that are over
@@ -118,6 +118,7 @@ async function describeMonth(ledgerId: string, today: string, currency: string):
     "",
     `## ${month.label} so far`,
     `Income ${money(now.income)}, expenses ${money(now.expense)}, net ${money(now.income - now.expense)}.`,
+    `Card purchases made this month on statements closing later, not in these expenses: ${money(now.billedLater)}.`,
     `Still scheduled this month from recurring rules: income ${money(now.scheduled.income)}, expenses ${money(now.scheduled.expense)}.`,
     `Recurring payments this month: ${money(now.recurring.expense.posted)} paid, ${money(now.recurring.expense.scheduled)} to come.`,
     "Expenses by category:",
@@ -138,7 +139,7 @@ async function describeMonth(ledgerId: string, today: string, currency: string):
     `Active rules average ${money(perMonth.income)} income and ${money(perMonth.expense)} payments per month, leaving ${money(perMonth.net)}.`,
     "",
     `## ${upcoming.label} (next month, scheduled so far)`,
-    `Income ${money(coming.scheduled.income + coming.income)}, payments ${money(coming.scheduled.expense + coming.expense)} (recurring rules plus anything already dated next month).`,
+    `Income ${money(coming.scheduled.income + coming.income)}, payments ${money(coming.scheduled.expense + coming.expense)} (recurring rules plus anything already counted in next month, such as card statements closing then).`,
     `Budgets total ${money(budgeted.reduce((sum, b) => sum + b.budget!, 0))}.`,
     "",
     `## ${last.label} (full month)`,

@@ -45,7 +45,7 @@ type TransactionDoc = {
   recurringId?: ObjectId; // the rule that generated it, until its date is edited
   method?: Method; // how an expense was paid; missing = not set
   cardId?: ObjectId; // with method "card"
-  statementDate?: Date; // with method "card": UTC midnight of its statement's cutoff date, which sets its budget month
+  statementDate?: Date; // with method "card": UTC midnight of its statement's cutoff date, which sets the month it counts in
   statementPinned?: true; // moved to another statement by hand, so cutoff edits leave it alone
   createdAt: Date;
   updatedAt: Date;
@@ -637,6 +637,19 @@ const inRange = (ledgerId: string, from: string, to: string): Filter<Transaction
   date: { $gte: toUtc(from), $lte: toUtc(to) },
 });
 
+/**
+ * What counts in a period for budgets and the dashboard: a card purchase by its statement date,
+ * everything else by its date. Each branch repeats ledgerId and `extra`, and the first names $type, so
+ * each branch can use its own index (the statementDate one is partial) and only scans the period.
+ */
+const countedIn = (ledgerId: string, from: string, to: string, extra: Filter<TransactionDoc> = {}): Filter<TransactionDoc> => ({
+  $or: [
+    { ledgerId, ...extra, statementDate: { $type: "date", $gte: toUtc(from), $lte: toUtc(to) } },
+    // Null also matches a missing field, but the driver's types only allow a Date here.
+    { ledgerId, ...extra, statementDate: null as unknown as Date, date: { $gte: toUtc(from), $lte: toUtc(to) } },
+  ],
+});
+
 function toTransaction(d: TransactionDoc): Transaction {
   return {
     id: d._id.toHexString(),
@@ -1001,6 +1014,8 @@ export type Summary = {
   expense: number;
   income: number;
   count: number;
+  /** Card purchases made in the range on a statement that closes after it, so not in `expense`. */
+  billedLater: number;
   series: SeriesPoint[];
   expenseByCategory: CategoryTotal[];
   incomeByCategory: CategoryTotal[];
@@ -1018,17 +1033,26 @@ type Row = { bucket: string; type: TxType; cat: string; sub: string | null; tota
 /** Occurrences from each active rule's next one through `to`, which generation hasn't reached yet. */
 async function projectRecurring(ledgerId: string, range: Range): Promise<Row[]> {
   const rules = await recurring.find({ ledgerId, pausedAt: null, nextDate: { $ne: null, $lte: toUtc(range.to) } }).toArray();
+  const cardIds = rules.flatMap((r) => (r.method === "card" && r.cardId ? [r.cardId] : []));
+  const cutoffs = new Map(
+    cardIds.length
+      ? (await cards.find({ _id: { $in: cardIds }, ledgerId }, { projection: { cutoffDay: 1 } }).toArray()).map((c) => [c._id.toHexString(), c.cutoffDay])
+      : [],
+  );
   const rows: Row[] = [];
   for (const rule of rules) {
     const start = toIso(rule.startDate);
     const end = rule.endDate && toIso(rule.endDate);
     const last = end && end < range.to ? end : range.to;
+    const cutoffDay = rule.method === "card" && rule.cardId ? cutoffs.get(rule.cardId.toHexString()) : undefined;
     for (let k = rule.nextIndex, n = 0; n < MAX_PROJECTED; k++, n++) {
       const date = occurrence(start, rule.unit, rule.every, k);
       if (date > last) break;
-      if (date < range.from) continue;
+      // A statement never closes before its purchase, so the check above still ends the loop in time.
+      const counted = cutoffDay ? statementFor(date, cutoffDay) : date;
+      if (counted < range.from || counted > range.to) continue;
       rows.push({
-        bucket: startOf(date, range.group),
+        bucket: startOf(counted, range.group),
         type: rule.type,
         cat: rule.categoryId.toHexString(),
         sub: rule.subcategoryId?.toHexString() ?? null,
@@ -1041,16 +1065,14 @@ async function projectRecurring(ledgerId: string, range: Range): Promise<Row[]> 
 }
 
 export async function getSummary(ledgerId: string, range: Range): Promise<Summary> {
-  const match = inRange(ledgerId, range.from, range.to);
-
-  const [rawRows, recurringRows, scheduledRows, cats] = await Promise.all([
+  const [rawRows, recurringRows, billedLaterRows, scheduledRows, cats] = await Promise.all([
     transactions
       .aggregate<{ _id: { bucket: Date; type: TxType; cat: ObjectId; sub: ObjectId | null }; total: number; count: number }>([
-        { $match: match },
+        { $match: countedIn(ledgerId, range.from, range.to) },
         {
           $group: {
             _id: {
-              bucket: { $dateTrunc: { date: "$date", unit: range.group, timezone: "UTC", startOfWeek: "monday" } },
+              bucket: { $dateTrunc: { date: { $ifNull: ["$statementDate", "$date"] }, unit: range.group, timezone: "UTC", startOfWeek: "monday" } },
               type: "$type",
               cat: "$categoryId",
               sub: "$subcategoryId",
@@ -1063,8 +1085,14 @@ export async function getSummary(ledgerId: string, range: Range): Promise<Summar
       .toArray(),
     transactions
       .aggregate<{ _id: TxType; total: number; count: number }>([
-        { $match: { ...match, recurringId: { $exists: true } } },
+        { $match: countedIn(ledgerId, range.from, range.to, { recurringId: { $exists: true } }) },
         { $group: { _id: "$type", total: { $sum: "$amount" }, count: { $sum: 1 } } },
+      ])
+      .toArray(),
+    transactions
+      .aggregate<{ total: number }>([
+        { $match: { ...inRange(ledgerId, range.from, range.to), statementDate: { $gt: toUtc(range.to) } } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
       ])
       .toArray(),
     projectRecurring(ledgerId, range),
@@ -1158,6 +1186,7 @@ export async function getSummary(ledgerId: string, range: Range): Promise<Summar
 
   return {
     ...totals,
+    billedLater: billedLaterRows[0]?.total ?? 0,
     series: [...series.values()],
     expenseByCategory: actual.expense,
     incomeByCategory: actual.income,
@@ -1216,17 +1245,7 @@ export async function getBudgetStatus(
     budgets.find({ ledgerId }).toArray(),
     transactions
       .aggregate<{ _id: ObjectId; total: number }>([
-        {
-          // A card purchase counts in its statement's month; everything else in the month of its date.
-          // Each branch repeats ledgerId and type, and the first names $type, so each branch can use its
-          // own index (the statementDate one is partial) and only scans the month.
-          $match: {
-            $or: [
-              { ledgerId, type: "expense", statementDate: { $type: "date", $gte: toUtc(monthStart), $lte: toUtc(monthEnd) } },
-              { ledgerId, type: "expense", statementDate: null, date: { $gte: toUtc(monthStart), $lte: toUtc(monthEnd) } },
-            ],
-          },
-        },
+        { $match: countedIn(ledgerId, monthStart, monthEnd, { type: "expense" }) },
         { $group: { _id: "$categoryId", total: { $sum: "$amount" } } },
       ])
       .toArray(),

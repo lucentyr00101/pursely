@@ -60,7 +60,7 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
       <PageHeader
         className=""
         title={`Hi, ${ledger.user.name.split(" ")[0]}`}
-        description="Here's how your money moved."
+        description={`Here's how your money moved.${cards.length ? " Card purchases count in the month their statement closes." : ""}`}
         actions={<AddTransactionButton categories={categories} cards={cards} methodColors={methodColors} currency={currency} date={today} canEdit={ledger.role !== "viewer"} />}
       />
 
@@ -80,6 +80,7 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
           value={formatMoney(summary.expense, currency)}
           dot="var(--series-expense)"
           hint={scheduled.expense ? `+${formatMoney(scheduled.expense, currency)} scheduled` : undefined}
+          note={summary.billedLater ? `${formatMoney(summary.billedLater, currency)} swiped, billed later` : undefined}
         />
         <Kpi
           label="Income"
@@ -158,10 +159,11 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
   );
 }
 
-function Kpi({ label, value, hint, dot, className = "", span = "" }: {
+function Kpi({ label, value, hint, note, dot, className = "", span = "" }: {
   label: string;
   value: string;
   hint?: string;
+  note?: string;
   dot?: string;
   className?: string;
   span?: string;
@@ -176,6 +178,7 @@ function Kpi({ label, value, hint, dot, className = "", span = "" }: {
         {value}
       </dd>
       {hint && <dd className="mt-0.5 text-xs text-subtle">{hint}</dd>}
+      {note && <dd className="mt-0.5 text-xs text-subtle">{note}</dd>}
     </div>
   );
 }
