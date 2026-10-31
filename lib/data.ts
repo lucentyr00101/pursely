@@ -4,7 +4,7 @@ import { db } from "./db";
 import { SYSTEM_CATEGORIES, type IconKey, type TxType } from "./category-defs";
 import { addMonths, buckets, startOf, toIso, toUtc, type Granularity, type Range } from "./dates";
 import { DEFAULT_CURRENCY, formatMoney } from "./money";
-import { monthlyTotals, occurrence } from "./recurring";
+import { firstOccurrence, keepEnd, monthlyTotals, occurrence } from "./recurring";
 import {
   DEFAULT_CARD_COLOR,
   DEFAULT_METHOD_COLORS,
@@ -839,9 +839,6 @@ export async function listRecurring(ledgerId: string): Promise<Recurring[]> {
     .sort((a, b) => rank(a) - rank(b) || (a.nextDate ?? "").localeCompare(b.nextDate ?? ""));
 }
 
-/** Moving a start forward can pass the end date. The end moves with it, so the rule keeps that payment. */
-const keepEnd = (end: string, before: string, after: string) => (before <= end && end < after ? after : end);
-
 /**
  * The schedule fields for a rule anchored at `start`: its first occurrence is `start` itself. A monthly
  * rule on a card (`cutoffDay`) starts on the cutoff of the statement that date falls on, and each
@@ -849,7 +846,7 @@ const keepEnd = (end: string, before: string, after: string) => (before <= end &
  * earlier day afterwards, which is still the same statement.
  */
 function schedule(input: RecurringInput, cutoffDay?: number) {
-  const startIso = cutoffDay && input.unit === "month" ? statementFor(input.start, cutoffDay) : input.start;
+  const startIso = firstOccurrence(input.start, input.unit, cutoffDay);
   const end = input.end ? toUtc(keepEnd(input.end, input.start, startIso)) : null;
   const start = toUtc(startIso);
   return {

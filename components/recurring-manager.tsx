@@ -7,13 +7,14 @@ import type { CategoryNode, PaymentCard, Recurring } from "@/lib/data";
 import type { MethodColors } from "@/lib/statements";
 import type { TxType } from "@/lib/category-defs";
 import { formatDate, GRANULARITIES, type Granularity } from "@/lib/dates";
-import { centsToInput, formatMoney } from "@/lib/money";
-import { describeSchedule, MAX_EVERY, perMonth, remaining } from "@/lib/recurring";
+import { centsToInput, formatMoney, parseAmount } from "@/lib/money";
+import { describeSchedule, firstOccurrence, lastWithin, MAX_EVERY, MAX_RUN, perMonth, remaining } from "@/lib/recurring";
 import { CategoryIcon } from "./category-icon";
 import { DatePicker } from "./date-picker";
 import { MethodTag } from "./method-icon";
 import { Modal } from "./modal";
 import { PaidWithField, useRememberedPaidWith } from "./paid-with";
+import { SchedulePreview } from "./schedule-preview";
 import { Select } from "./select";
 import { CategorySelect, TypeToggle } from "./transaction-form";
 import { buildLookup } from "./transaction-list";
@@ -285,6 +286,15 @@ export function RecurringList({ rules, categories, cards, methodColors, currency
   );
 }
 
+type EndMode = "never" | "for" | "on";
+const END_MODES: { value: EndMode; label: string }[] = [
+  { value: "never", label: "Never" },
+  { value: "for", label: "After a set time" },
+  { value: "on", label: "On a date" },
+];
+
+const inRange = (value: number, max: number) => Number.isInteger(value) && value >= 1 && value <= max;
+
 function RecurringForm({ categories, cards, methodColors, currency, today, rule, onDone }: {
   categories: CategoryNode[];
   cards: PaymentCard[];
@@ -299,19 +309,33 @@ function RecurringForm({ categories, cards, methodColors, currency, today, rule,
   const [every, setEvery] = useState(String(rule?.every ?? 1));
   const [unit, setUnit] = useState<Granularity>(rule?.unit ?? "month");
   const [start, setStart] = useState(rule ? (rule.nextDate ?? today) : today);
+  const [endMode, setEndMode] = useState<EndMode>(rule?.endDate ? "on" : "never");
+  const [endDate, setEndDate] = useState(rule?.endDate ?? "");
+  const [runLength, setRunLength] = useState("");
+  const [runUnit, setRunUnit] = useState<Granularity>("month");
+  const [amount, setAmount] = useState(rule ? centsToInput(rule.amount) : "");
   const remembered = useRememberedPaidWith(cards);
   const paidWith = rule ? (rule.cardId ?? rule.method ?? "") : remembered;
+  const [picked, setPicked] = useState<string | null>(null);
+  const card = type === "expense" ? cards.find((c) => c.id === (picked ?? paidWith)) : undefined;
 
   useEffect(() => {
     if (state.ok) onDone();
   }, [state, onDone]);
 
   const plural = every !== "1";
+  // A set length saves as the date of its last entry, so the server only ever sees an end date.
+  const runEnd =
+    endMode === "for" && start && inRange(Number(every), MAX_EVERY) && inRange(Number(runLength), MAX_RUN)
+      ? lastWithin(firstOccurrence(start, unit, card?.cutoffDay), unit, Number(every), Number(runLength), runUnit)
+      : "";
+  const end = endMode === "on" ? endDate : runEnd;
 
   return (
     <form action={action} className="flex flex-col gap-4">
       {rule && <input type="hidden" name="id" value={rule.id} />}
       <input type="hidden" name="type" value={type} />
+      <input type="hidden" name="end" value={end} />
 
       <TypeToggle type={type} onChange={setType} />
 
@@ -327,7 +351,8 @@ function RecurringForm({ categories, cards, methodColors, currency, today, rule,
           required
           data-autofocus
           placeholder="0.00"
-          defaultValue={rule ? centsToInput(rule.amount) : ""}
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
           className="field tabular text-lg font-semibold"
         />
       </div>
@@ -337,7 +362,7 @@ function RecurringForm({ categories, cards, methodColors, currency, today, rule,
       {/* Hidden rather than removed for income, so switching back keeps the choice. The server ignores it for income. */}
       {paidWith !== null && (
         <div hidden={type !== "expense"}>
-          <PaidWithField key={paidWith} id="rc-paid-with" cards={cards} methodColors={methodColors} date={start} defaultValue={paidWith} showStatement={false} followsCutoff={unit === "month"} />
+          <PaidWithField key={paidWith} id="rc-paid-with" cards={cards} methodColors={methodColors} date={start} defaultValue={paidWith} showStatement={false} onChange={setPicked} />
         </div>
       )}
 
@@ -366,32 +391,67 @@ function RecurringForm({ categories, cards, methodColors, currency, today, rule,
         </div>
       </fieldset>
 
-      <div className="grid grid-cols-2 gap-3">
+      {/* Stacked on phones: side by side, a full date doesn't fit next to the calendar icon. */}
+      <div className="grid gap-3 min-[26rem]:grid-cols-2">
         <div className="min-w-0">
           <label htmlFor="rc-start" className="label">
             {rule ? "Next on" : "Starts"}
           </label>
-          <DatePicker
-            id="rc-start"
-            name="start"
-            required
-            value={start}
-            onChange={setStart}
-            aria-describedby={rule ? "rc-start-hint" : undefined}
-          />
+          <DatePicker id="rc-start" name="start" required value={start} onChange={setStart} aria-describedby="rc-schedule" />
         </div>
         <div className="min-w-0">
-          <label htmlFor="rc-end" className="label">
-            Ends <span className="font-normal text-subtle">(optional)</span>
+          <label htmlFor="rc-end-mode" className="label">
+            Ends
           </label>
-          <DatePicker id="rc-end" name="end" defaultValue={rule?.endDate ?? ""} placeholder="Never" />
+          <Select id="rc-end-mode" options={END_MODES} value={endMode} onChange={setEndMode} />
         </div>
       </div>
-      {rule && (
-        <p id="rc-start-hint" className="-mt-2 text-sm text-muted">
-          Changes apply from this date on. Entries already added stay as they are.
-        </p>
+      {endMode === "for" && (
+        <fieldset>
+          <legend className="label">Runs for</legend>
+          <div className="grid grid-cols-[5rem_1fr] gap-2">
+            <input
+              aria-label="Length"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={MAX_RUN}
+              required
+              value={runLength}
+              onChange={(e) => setRunLength(e.target.value)}
+              aria-describedby="rc-schedule"
+              className="field tabular text-center"
+            />
+            <Select
+              aria-label="Length unit"
+              options={GRANULARITIES.map((u) => ({ value: u, label: UNIT_LABELS[u][runLength === "1" ? 0 : 1] }))}
+              value={runUnit}
+              onChange={setRunUnit}
+            />
+          </div>
+        </fieldset>
       )}
+      {endMode === "on" && (
+        <div>
+          <label htmlFor="rc-end" className="label">
+            End date
+          </label>
+          <DatePicker id="rc-end" required value={endDate} onChange={setEndDate} min={start} aria-describedby="rc-schedule" />
+        </div>
+      )}
+      <SchedulePreview
+        id="rc-schedule"
+        start={start}
+        end={end}
+        endPending={endMode !== "never" && !end}
+        unit={unit}
+        every={Number(every)}
+        amount={parseAmount(amount)}
+        card={card}
+        currency={currency}
+        today={today}
+        editing={!!rule}
+      />
 
       <div>
         <label htmlFor="rc-note" className="label">

@@ -3,7 +3,7 @@
 import { useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import type { PaymentCard } from "@/lib/data";
 import { formatDate } from "@/lib/dates";
-import { cardLabel, FIXED_METHODS, isFixedMethod, METHOD_LABELS, ordinal, statementChoices, statementFor, type MethodColors } from "@/lib/statements";
+import { cardLabel, FIXED_METHODS, isFixedMethod, METHOD_LABELS, ordinal, statementChoices, type MethodColors } from "@/lib/statements";
 import { MethodIcon } from "./method-icon";
 import { Select, type SelectOption } from "./select";
 
@@ -40,9 +40,9 @@ export function useRememberedPaidWith(cards: PaymentCard[]): string | null {
 /**
  * The "Paid with" select, and for a card the statement the purchase lands on. `defaultStatement`
  * applies while the card and date are the ones the form opened with; changing either goes back to
- * the automatic statement. With `followsCutoff`, for a monthly rule, it says a card moves the rule's dates.
+ * the automatic statement. `onChange` reports the picked value to forms that depend on the card.
  */
-export function PaidWithField({ id, cards, methodColors, date, defaultValue, defaultStatement, showStatement, followsCutoff = false }: {
+export function PaidWithField({ id, cards, methodColors, date, defaultValue, defaultStatement, showStatement, onChange }: {
   id: string;
   cards: PaymentCard[];
   methodColors: MethodColors;
@@ -50,7 +50,7 @@ export function PaidWithField({ id, cards, methodColors, date, defaultValue, def
   defaultValue: string;
   defaultStatement?: string | null;
   showStatement: boolean;
-  followsCutoff?: boolean;
+  onChange?: (value: string) => void;
 }) {
   const [value, setValue] = useState(defaultValue);
   const [initialDate] = useState(date);
@@ -62,14 +62,19 @@ export function PaidWithField({ id, cards, methodColors, date, defaultValue, def
       <label htmlFor={id} className="label">
         Paid with
       </label>
-      <Select id={id} name="paidWith" options={paidWithOptions(cards, methodColors, defaultValue)} value={value} onChange={setValue} placeholder="Not set" />
+      <Select
+        id={id}
+        name="paidWith"
+        options={paidWithOptions(cards, methodColors, defaultValue)}
+        value={value}
+        onChange={(next) => {
+          setValue(next);
+          onChange?.(next);
+        }}
+        placeholder="Not set"
+      />
       {showStatement && card && (
         <StatementLine key={`${card.id} ${date}`} card={card} date={date} initial={original ? (defaultStatement ?? null) : null} />
-      )}
-      {followsCutoff && card && (
-        <p className="mt-1.5 text-sm text-muted">
-          Follows {card.name}&apos;s cutoff ({ordinal(card.cutoffDay)}). The next entry is {shortDate(statementFor(date, card.cutoffDay))}.
-        </p>
       )}
     </div>
   );

@@ -6,11 +6,12 @@ import { saveTransaction, type ActionState } from "@/app/actions";
 import type { CategoryNode, PaymentCard, Transaction } from "@/lib/data";
 import type { MethodColors } from "@/lib/statements";
 import type { TxType } from "@/lib/category-defs";
-import type { Granularity } from "@/lib/dates";
+import { todayIn, type Granularity } from "@/lib/dates";
 import { centsToInput } from "@/lib/money";
 import { CategoryIcon } from "./category-icon";
 import { DatePicker } from "./date-picker";
 import { PAID_WITH_KEY, PaidWithField, useRememberedPaidWith } from "./paid-with";
+import { SchedulePreview } from "./schedule-preview";
 import { Select, type SelectOption } from "./select";
 import { FormError } from "./ui";
 
@@ -36,6 +37,8 @@ export function TransactionForm({ categories, cards, methodColors, currency, dat
   const [txDate, setTxDate] = useState(transaction?.date ?? date);
   const remembered = useRememberedPaidWith(cards);
   const paidWith = transaction ? (transaction.cardId ?? transaction.method ?? "") : remembered;
+  const [picked, setPicked] = useState<string | null>(null);
+  const card = type === "expense" ? cards.find((c) => c.id === (picked ?? paidWith)) : undefined;
   const submitted = useRef<FormDataEntryValue | null>(null);
 
   useEffect(() => {
@@ -94,7 +97,7 @@ export function TransactionForm({ categories, cards, methodColors, currency, dat
             defaultValue={paidWith}
             defaultStatement={transaction?.statementDate}
             showStatement={!repeat}
-            followsCutoff={repeat === "month"}
+            onChange={setPicked}
           />
         </div>
       )}
@@ -115,6 +118,16 @@ export function TransactionForm({ categories, cards, methodColors, currency, dat
           </div>
         )}
       </div>
+      {repeat && (
+        <SchedulePreview
+          start={txDate}
+          unit={repeat}
+          every={1}
+          card={card}
+          currency={currency}
+          today={todayIn(Intl.DateTimeFormat().resolvedOptions().timeZone)}
+        />
+      )}
       {transaction?.recurringId && (
         <p className="-mt-2 flex items-center gap-1.5 text-sm text-muted">
           <Repeat className="size-4 shrink-0" aria-hidden />
@@ -157,8 +170,8 @@ export function TypeToggle({ type, onChange }: { type: TxType; onChange: (type: 
             type="button"
             aria-pressed={type === t}
             onClick={() => onChange(t)}
-            className={`h-10 cursor-pointer rounded-md text-sm font-semibold capitalize transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-ring ${
-              type === t ? "bg-surface-strong text-fg shadow-sm" : "text-muted hover:text-fg"
+            className={`h-11 cursor-pointer rounded-md text-sm font-semibold capitalize transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-ring ${
+              type === t ? "bg-surface-strong text-fg shadow-sm" : "text-muted hover:text-fg active:text-fg"
             }`}
           >
             {t}

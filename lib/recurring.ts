@@ -1,7 +1,19 @@
 // Schedule math for recurring transactions, shared by client and server. Dates are YYYY-MM-DD strings.
 import { addDays, addMonths, formatDate, type Granularity } from "./dates";
+import { statementFor } from "./statements";
 
 export const MAX_EVERY = 365;
+
+/**
+ * The first occurrence of a rule saved from `start`: `start` itself, except that a monthly rule on a
+ * card (`cutoffDay`) starts on the cutoff of the statement that date falls on.
+ */
+export function firstOccurrence(start: string, unit: Granularity, cutoffDay?: number): string {
+  return cutoffDay && unit === "month" ? statementFor(start, cutoffDay) : start;
+}
+
+/** Moving a start forward can pass the end date. The end moves with it, so the rule keeps that payment. */
+export const keepEnd = (end: string, before: string, after: string) => (before <= end && end < after ? after : end);
 
 /**
  * The k-th occurrence (0 = the start date). Always counted from the start, so a rule starting on the
@@ -18,6 +30,20 @@ export function occurrence(start: string, unit: Granularity, every: number, k: n
     case "year":
       return addMonths(start, 12 * k * every);
   }
+}
+
+/** The most a rule's "runs for" length can be, in any unit. */
+export const MAX_RUN = 999;
+
+/**
+ * The last occurrence of a rule that runs for `length` `lengthUnit`s from `first`: 6 months from
+ * Nov 20 ends on Apr 20, and the entry on May 20 would start a seventh month.
+ */
+export function lastWithin(first: string, unit: Granularity, every: number, length: number, lengthUnit: Granularity): string {
+  const stop = occurrence(first, lengthUnit, 1, length);
+  let k = 0;
+  while (k < 5000 && occurrence(first, unit, every, k + 1) < stop) k++;
+  return occurrence(first, unit, every, k);
 }
 
 const UNIT_NAMES: Record<Granularity, [string, string]> = {
