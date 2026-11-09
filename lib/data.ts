@@ -754,6 +754,122 @@ export async function searchTransactions(ledgerId: string, search: TransactionSe
   };
 }
 
+/**
+ * What a detail view lists. Every field is optional and narrows the match; callers validate them.
+ * `basis: "counted"` (the default) places a card purchase on its statement date like the totals and
+ * budgets do, `"date"` on its own date like the chart and lists. `billedLater` keeps purchases made in
+ * the range on a statement that closes after it. `recurring: "excludeExpense"` drops recurring
+ * payments but keeps recurring income, as the chart does.
+ */
+export type DetailQuery = {
+  from?: string;
+  to?: string;
+  basis?: "counted" | "date";
+  type?: TxType;
+  categoryId?: string;
+  subcategoryId?: string; // an id, or "general" for none
+  paidWith?: string; // a fixed method, a card id, or "none"
+  recurring?: "only" | "exclude" | "excludeExpense";
+  recurringId?: string;
+  billedLater?: boolean;
+};
+
+export type DetailResult = { transactions: Transaction[]; count: number; expense: number; income: number };
+
+/** The transactions a `DetailQuery` matches, newest first and capped at `limit`, with totals over every match. */
+export async function detailTransactions(ledgerId: string, q: DetailQuery, limit: number): Promise<DetailResult> {
+  const and: Filter<TransactionDoc>[] = [];
+  const oid = (id: string | undefined) => (typeof id === "string" && ObjectId.isValid(id) ? new ObjectId(id) : null);
+  if (q.type) and.push({ type: q.type });
+  const cat = oid(q.categoryId);
+  if (cat) and.push({ categoryId: cat });
+  if (q.subcategoryId === "general") and.push({ subcategoryId: null });
+  else if (oid(q.subcategoryId)) and.push({ subcategoryId: oid(q.subcategoryId)! });
+  if (q.paidWith === "none") and.push({ type: "expense", method: { $exists: false } });
+  else if (isFixedMethod(q.paidWith)) and.push({ method: q.paidWith });
+  else if (oid(q.paidWith)) and.push({ cardId: oid(q.paidWith)! });
+  if (q.recurring === "only") and.push({ recurringId: { $exists: true } });
+  else if (q.recurring === "exclude") and.push({ recurringId: { $exists: false } });
+  else if (q.recurring === "excludeExpense") and.push({ $or: [{ type: "income" }, { recurringId: { $exists: false } }] });
+  const rule = oid(q.recurringId);
+  if (rule) and.push({ recurringId: rule });
+
+  const extra: Filter<TransactionDoc> = and.length ? { $and: and } : {};
+  let filter: Filter<TransactionDoc>;
+  if (q.from && q.to && q.basis !== "date" && !q.billedLater) {
+    filter = countedIn(ledgerId, q.from, q.to, extra);
+  } else {
+    const date = { ...(q.from && { $gte: toUtc(q.from) }), ...(q.to && { $lte: toUtc(q.to) }) };
+    filter = {
+      ledgerId,
+      ...extra,
+      ...(Object.keys(date).length && { date }),
+      ...(q.billedLater && q.to && { statementDate: { $gt: toUtc(q.to) } }),
+    };
+  }
+
+  const [docs, totals] = await Promise.all([
+    transactions.find(filter).sort({ date: -1, createdAt: -1 }).limit(limit).toArray(),
+    transactions
+      .aggregate<{ _id: TxType; total: number; count: number }>([
+        { $match: filter },
+        { $group: { _id: "$type", total: { $sum: "$amount" }, count: { $sum: 1 } } },
+      ])
+      .toArray(),
+  ]);
+  const byType = new Map(totals.map((t) => [t._id, t]));
+  return {
+    transactions: docs.map(toTransaction),
+    count: totals.reduce((n, t) => n + t.count, 0),
+    expense: byType.get("expense")?.total ?? 0,
+    income: byType.get("income")?.total ?? 0,
+  };
+}
+
+/** Per category or subcategory id: spend counted in the month, its transaction count, and the last date it was used at all. */
+export type CategoryStats = Record<string, { month: number; count: number; lastUsed: string | null }>;
+
+/**
+ * Usage per category for the Categories page. A top-level category's numbers include its
+ * subcategories'. The month counts card purchases on their statement date, like budgets.
+ */
+export async function categoryStats(ledgerId: string, monthStart: string, monthEnd: string): Promise<CategoryStats> {
+  type Group = { _id: { cat: ObjectId; sub: ObjectId | null }; total?: number; count?: number; last?: Date };
+  const [month, last] = await Promise.all([
+    transactions
+      .aggregate<Group>([
+        { $match: countedIn(ledgerId, monthStart, monthEnd) },
+        { $group: { _id: { cat: "$categoryId", sub: "$subcategoryId" }, total: { $sum: "$amount" }, count: { $sum: 1 } } },
+      ])
+      .toArray(),
+    transactions
+      .aggregate<Group>([
+        { $match: { ledgerId } },
+        { $group: { _id: { cat: "$categoryId", sub: "$subcategoryId" }, last: { $max: "$date" } } },
+      ])
+      .toArray(),
+  ]);
+  const stats: CategoryStats = {};
+  const entry = (id: string) => (stats[id] ??= { month: 0, count: 0, lastUsed: null });
+  for (const g of month) {
+    for (const id of [g._id.cat, g._id.sub]) {
+      if (!id) continue;
+      const e = entry(id.toHexString());
+      e.month += g.total ?? 0;
+      e.count += g.count ?? 0;
+    }
+  }
+  for (const g of last) {
+    const date = g.last ? toIso(g.last) : null;
+    for (const id of [g._id.cat, g._id.sub]) {
+      if (!id || !date) continue;
+      const e = entry(id.toHexString());
+      if (!e.lastUsed || date > e.lastUsed) e.lastUsed = date;
+    }
+  }
+  return stats;
+}
+
 export type DayTotal = { date: string; expense: number; income: number };
 
 export async function dailyTotals(ledgerId: string, from: string, to: string): Promise<DayTotal[]> {
@@ -1049,6 +1165,8 @@ export type Summary = {
   expenseByCategory: CategoryTotal[];
   /** `expenseByCategory` without recurring payments, for the dashboard's breakdown. */
   oneOffExpenseByCategory: CategoryTotal[];
+  /** `oneOffExpenseByCategory` split by how it was paid: a card id, a fixed method, or "none". */
+  oneOffExpenseByPaid: Record<string, CategoryTotal[]>;
   incomeByCategory: CategoryTotal[];
   /** Upcoming occurrences of active recurring rules in the range, not yet transactions. */
   scheduled: { expense: number; income: number; count: number };
@@ -1059,7 +1177,7 @@ export type Summary = {
 /** Plenty for any chart; a daily rule over a decades-long custom range stops here. */
 const MAX_PROJECTED = 5000;
 
-type Row = { bucket: string; type: TxType; cat: string; sub: string | null; total: number; count: number; recurring?: boolean };
+type Row = { bucket: string; type: TxType; cat: string; sub: string | null; total: number; count: number; recurring?: boolean; paid?: string };
 
 /**
  * Occurrences from each active rule's next one through `to`, which generation hasn't reached yet:
@@ -1102,7 +1220,7 @@ async function projectRecurring(ledgerId: string, range: Range): Promise<{ count
 export async function getSummary(ledgerId: string, range: Range): Promise<Summary> {
   const rowsOf = async (match: Filter<TransactionDoc>, on: string | { $ifNull: string[] }): Promise<Row[]> => {
     const raw = await transactions
-      .aggregate<{ _id: { bucket: Date; type: TxType; cat: ObjectId; sub: ObjectId | null; recurring: boolean }; total: number; count: number }>([
+      .aggregate<{ _id: { bucket: Date; type: TxType; cat: ObjectId; sub: ObjectId | null; recurring: boolean; paid: string }; total: number; count: number }>([
         { $match: match },
         {
           $group: {
@@ -1112,6 +1230,8 @@ export async function getSummary(ledgerId: string, range: Range): Promise<Summar
               cat: "$categoryId",
               sub: "$subcategoryId",
               recurring: { $ne: [{ $type: "$recurringId" }, "missing"] },
+              // How it was paid, as the search's `paidWith` names it: a card id, a fixed method, or "none".
+              paid: { $cond: [{ $eq: ["$method", "card"] }, { $toString: "$cardId" }, { $ifNull: ["$method", "none"] }] },
             },
             total: { $sum: "$amount" },
             count: { $sum: 1 },
@@ -1121,6 +1241,7 @@ export async function getSummary(ledgerId: string, range: Range): Promise<Summar
       .toArray();
     return raw.map((r) => ({
       recurring: r._id.recurring,
+      paid: r._id.paid,
       bucket: toIso(r._id.bucket),
       type: r._id.type,
       cat: r._id.cat.toHexString(),
@@ -1223,7 +1344,15 @@ export async function getSummary(ledgerId: string, range: Range): Promise<Summar
     return { expense: sorted(groups.expense), income: sorted(groups.income) };
   }
   const actual = byCategory(rows);
-  const oneOff = byCategory(rows.filter((r) => !r.recurring));
+  const oneOffRows = rows.filter((r) => !r.recurring);
+  const oneOff = byCategory(oneOffRows);
+  const byPaid = new Map<string, Row[]>();
+  for (const r of oneOffRows) {
+    if (r.type !== "expense") continue;
+    const key = r.paid ?? "none";
+    byPaid.set(key, [...(byPaid.get(key) ?? []), r]);
+  }
+  const oneOffExpenseByPaid = Object.fromEntries([...byPaid].map(([key, list]) => [key, byCategory(list).expense]));
   const dated = byCategory(seriesRows);
   const datedUpcoming = byCategory(seriesScheduledRows);
 
@@ -1249,6 +1378,7 @@ export async function getSummary(ledgerId: string, range: Range): Promise<Summar
     },
     expenseByCategory: actual.expense,
     oneOffExpenseByCategory: oneOff.expense,
+    oneOffExpenseByPaid,
     incomeByCategory: actual.income,
     scheduled,
     recurring: { expense: recurringTotals("expense"), income: recurringTotals("income") },

@@ -1,7 +1,8 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { getLedger } from "@/lib/session";
-import { listCategories } from "@/lib/data";
+import { getLedger, getToday } from "@/lib/session";
+import { categoryStats, getSettings, listCards, listCategories } from "@/lib/data";
+import { endOf, startOf } from "@/lib/dates";
 import { CategoryManager } from "@/components/category-manager";
 import { PageHeader, Skeleton } from "@/components/ui";
 
@@ -22,6 +23,26 @@ export default function CategoriesPage() {
 }
 
 async function Categories() {
-  const ledger = await getLedger();
-  return <CategoryManager categories={await listCategories(ledger.ledgerId)} canEdit={ledger.role !== "viewer"} />;
+  const [ledger, today] = await Promise.all([getLedger(), getToday()]);
+  const month = startOf(today, "month");
+  const monthEnd = endOf(month, "month");
+  const [categories, cards, { currency, methodColors }, stats] = await Promise.all([
+    listCategories(ledger.ledgerId),
+    listCards(ledger.ledgerId, { includeArchived: true }),
+    getSettings(ledger.ledgerId),
+    categoryStats(ledger.ledgerId, month, monthEnd),
+  ]);
+  return (
+    <CategoryManager
+      categories={categories}
+      cards={cards}
+      methodColors={methodColors}
+      currency={currency}
+      canEdit={ledger.role !== "viewer"}
+      stats={stats}
+      month={month}
+      monthEnd={monthEnd}
+      today={today}
+    />
+  );
 }

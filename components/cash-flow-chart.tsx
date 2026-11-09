@@ -13,8 +13,9 @@ import {
 } from "recharts";
 import { ChartColumn, Table2 } from "lucide-react";
 import type { CategoryTotal, SeriesPoint } from "@/lib/data";
-import { bucketLabel, bucketTitle, type Granularity } from "@/lib/dates";
+import { bucketLabel, bucketTitle, endOf, type Granularity } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
+import { TransactionsDialog, type DetailContext } from "./transactions-dialog";
 
 /** Scheduled (not yet posted) recurring amounts use this prefix on their category's data key. */
 const SCHEDULED = "s:";
@@ -29,17 +30,23 @@ function union(actual: CategoryTotal[], scheduled: CategoryTotal[]): CategoryTot
  * Two stacked bars per bucket, expenses then income, each split by category.
  * Only categories with transactions in the range get a series, and a bucket
  * with no income (or no expenses) draws nothing on that side. Upcoming
- * recurring occurrences stack on top as faded, outlined segments.
+ * recurring occurrences stack on top as faded, outlined segments. Clicking a bucket, or its row
+ * in the table, lists its transactions.
  */
-export function CashFlowChart({ data, expense, income, scheduledExpense, scheduledIncome, group, currency }: {
+export function CashFlowChart({ data, expense, income, scheduledExpense, scheduledIncome, group, from, to, detail }: {
   data: SeriesPoint[];
   expense: CategoryTotal[];
   income: CategoryTotal[];
   scheduledExpense: CategoryTotal[];
   scheduledIncome: CategoryTotal[];
   group: Granularity;
-  currency: string;
+  /** The range, so a partial first or last bucket lists only the days inside it. */
+  from: string;
+  to: string;
+  detail: DetailContext;
 }) {
+  const { currency } = detail;
+  const [picked, setPicked] = useState<SeriesPoint | null>(null);
   const [view, setView] = useState<"chart" | "table">("chart");
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const expenseCats = union(expense, scheduledExpense);
@@ -73,7 +80,7 @@ export function CashFlowChart({ data, expense, income, scheduledExpense, schedul
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="font-semibold">Cash flow</h2>
-          <p className="mt-0.5 text-sm text-muted">Per {group}, by transaction date, without recurring payments</p>
+          <p className="mt-0.5 text-sm text-muted">Per {group}, by transaction date, without recurring payments. Select a bar for its transactions.</p>
         </div>
         <button
           type="button"
@@ -130,6 +137,11 @@ export function CashFlowChart({ data, expense, income, scheduledExpense, schedul
           <ResponsiveContainer>
             <BarChart
               data={rows}
+              onClick={(state) => {
+                const point = data[Number(state.activeIndex)];
+                if (point) setPicked(point);
+              }}
+              style={{ cursor: "pointer" }}
               barGap={2}
               barCategoryGap={rows.length > 40 ? "10%" : "25%"}
               margin={{ top: 8, right: 4, bottom: 0, left: 0 }}
@@ -197,7 +209,16 @@ export function CashFlowChart({ data, expense, income, scheduledExpense, schedul
             <tbody className="tabular divide-y divide-line">
               {data.map((d) => (
                 <tr key={d.bucket}>
-                  <th scope="row" className="px-3 py-2 text-left font-normal">{bucketTitle(d.bucket, group)}</th>
+                  <th scope="row" className="px-1 py-0.5 text-left font-normal">
+                    <button
+                      type="button"
+                      aria-haspopup="dialog"
+                      onClick={() => setPicked(d)}
+                      className="min-h-11 cursor-pointer rounded-md px-2 text-left underline-offset-2 transition-colors duration-150 hover:text-primary hover:underline active:text-primary active:underline focus-visible:outline-2 focus-visible:outline-ring"
+                    >
+                      {bucketTitle(d.bucket, group)}
+                    </button>
+                  </th>
                   <td className="px-3 py-2 text-right">
                     {formatMoney(d.expense, currency)}
                     <ScheduledNote amount={d.scheduled.expense} currency={currency} />
@@ -215,6 +236,27 @@ export function CashFlowChart({ data, expense, income, scheduledExpense, schedul
           </table>
         </div>
       )}
+
+      <TransactionsDialog
+        {...detail}
+        query={
+          picked && {
+            from: picked.bucket < from ? from : picked.bucket,
+            to: endOf(picked.bucket, group) > to ? to : endOf(picked.bucket, group),
+            basis: "date",
+            recurring: "excludeExpense",
+          }
+        }
+        title={picked ? bucketTitle(picked.bucket, group) : ""}
+        note={
+          picked &&
+          [
+            "By transaction date, without recurring payments.",
+            picked.scheduled.income ? `Plus ${formatMoney(picked.scheduled.income, currency)} of income scheduled, not added yet.` : "",
+          ].join(" ")
+        }
+        onClose={() => setPicked(null)}
+      />
     </div>
   );
 }

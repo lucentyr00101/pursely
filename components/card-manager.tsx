@@ -1,9 +1,10 @@
 "use client";
 
 import { useActionState, useCallback, useEffect, useState, useTransition } from "react";
-import { LoaderCircle, Pencil, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, LoaderCircle, Pencil, Plus, ReceiptText } from "lucide-react";
 import { archiveCardAction, saveCard, saveMethodColor, type ActionState } from "@/app/actions";
 import type { PaymentCard } from "@/lib/data";
+import { formatDate } from "@/lib/dates";
 import {
   FIXED_METHODS,
   METHOD_COLOR_NAMES,
@@ -11,13 +12,15 @@ import {
   METHOD_LABELS,
   nextCardColor,
   ordinal,
+  statementAt,
+  statementStart,
   type FixedMethod,
   type MethodColor,
-  type MethodColors,
 } from "@/lib/statements";
 import { MethodIcon } from "./method-icon";
 import { Modal } from "./modal";
 import { Select, type SelectOption } from "./select";
+import { TransactionsDialog, type DetailContext } from "./transactions-dialog";
 import { FormError } from "./ui";
 
 type Dialog =
@@ -28,8 +31,11 @@ type Dialog =
 
 const CUTOFF_OPTIONS: SelectOption[] = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: ordinal(i + 1) }));
 
-export function CardManager({ cards, methodColors, canEdit }: { cards: PaymentCard[]; methodColors: MethodColors; canEdit: boolean }) {
+/** `cards` includes archived ones, so old purchases still name their card; only active ones are listed. */
+export function CardManager({ today, ...context }: DetailContext & { today: string }) {
+  const { cards, methodColors, canEdit } = context;
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [statements, setStatements] = useState<PaymentCard | null>(null);
   const close = useCallback(() => setDialog(null), []);
   const active = cards.filter((c) => !c.archived);
 
@@ -56,6 +62,16 @@ export function CardManager({ cards, methodColors, canEdit }: { cards: PaymentCa
                 ••{card.last4} · cutoff {ordinal(card.cutoffDay)}
               </p>
             </div>
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              className={`icon-btn ${canEdit ? "" : "-mr-2"}`}
+              aria-label={`${card.name} statements`}
+              title="Statements"
+              onClick={() => setStatements(card)}
+            >
+              <ReceiptText className="size-4" aria-hidden />
+            </button>
             {canEdit && (
               <button type="button" className="icon-btn -mr-2" aria-label={`Edit ${card.name}`} onClick={() => setDialog({ kind: "edit", card })}>
                 <Pencil className="size-4" aria-hidden />
@@ -98,6 +114,9 @@ export function CardManager({ cards, methodColors, canEdit }: { cards: PaymentCa
         )}
         {dialog?.kind === "method" && <MethodColorForm method={dialog.method} defaultColor={methodColors[dialog.method]} onDone={close} />}
       </Modal>
+
+      {/* Keyed so each card opens on its current statement. */}
+      <CardStatements key={statements?.id} card={statements} today={today} context={context} onClose={() => setStatements(null)} />
     </>
   );
 }
@@ -238,5 +257,54 @@ function ConfirmArchive({ card, onDone, onCancel }: { card: PaymentCard; onDone:
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * One statement's purchases at a time, opening on the one that closes next. Later statements can
+ * hold purchases moved there by hand, so the next one is reachable too.
+ */
+function CardStatements({ card, today, context, onClose }: {
+  card: PaymentCard | null;
+  today: string;
+  context: DetailContext;
+  onClose: () => void;
+}) {
+  const [offset, setOffset] = useState(0);
+  if (!card) return <TransactionsDialog {...context} query={null} title="" onClose={onClose} />;
+  const close = statementAt(today, card.cutoffDay, offset);
+  const start = statementStart(close, card.cutoffDay);
+  const closed = close < today;
+  const day = (iso: string) => formatDate(iso, { month: "short", day: "numeric", year: iso.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric" });
+  return (
+    <TransactionsDialog
+      {...context}
+      query={{ from: close, to: close, paidWith: card.id }}
+      title={`${card.name} ••${card.last4}`}
+      header={
+        <div className="mb-3 flex items-center gap-2">
+          <button type="button" className="icon-btn shrink-0 border border-line-strong" aria-label="Previous statement" onClick={() => setOffset(offset - 1)}>
+            <ChevronLeft className="size-5" aria-hidden />
+          </button>
+          <div className="min-w-0 flex-1 text-center" aria-live="polite">
+            <p className="font-semibold">{formatDate(close, { month: "long", year: "numeric" })} statement</p>
+            <p className="text-xs text-muted">
+              Purchases {day(start)} – {day(close)} · {closed ? "Closed" : close === today ? "Closes today" : "Open"}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="icon-btn shrink-0 border border-line-strong disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Next statement"
+            disabled={offset >= 1}
+            onClick={() => setOffset(offset + 1)}
+          >
+            <ChevronRight className="size-5" aria-hidden />
+          </button>
+        </div>
+      }
+      note="Purchases moved to another statement by hand show on that one."
+      onClose={onClose}
+    />
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowDownRight, ArrowUpRight, LoaderCircle, Pencil, Repeat, Trash2 } from "lucide-react";
 import { removeTransaction } from "@/app/actions";
@@ -27,7 +27,7 @@ export function buildLookup(categories: CategoryNode[]): Lookup {
 
 type Authors = Record<string, { name: string; image: string | null }>;
 
-export function TransactionList({ transactions, categories, cards, methodColors, currency, canEdit, authors, showDates = false }: {
+export function TransactionList({ transactions, categories, cards, methodColors, currency, canEdit, authors, showDates = false, onChanged }: {
   transactions: Transaction[];
   categories: CategoryNode[];
   cards: PaymentCard[];
@@ -37,12 +37,23 @@ export function TransactionList({ transactions, categories, cards, methodColors,
   authors?: Authors;
   /** Head each run of same-day rows with its date, for lists that span several days. */
   showDates?: boolean;
+  /** Called after a transaction is saved or deleted, for lists the server doesn't re-render. */
+  onChanged?: () => void;
 }) {
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
   const lookup = buildLookup(categories);
   const cardsById = new Map(cards.map((c) => [c.id, c]));
   const closeEdit = useCallback(() => setEditing(null), []);
+  // A ref keeps `doneEdit` stable: the form calls it from an effect that lists it as a dependency.
+  const changed = useRef(onChanged);
+  useEffect(() => {
+    changed.current = onChanged;
+  });
+  const doneEdit = useCallback(() => {
+    setEditing(null);
+    changed.current?.();
+  }, []);
 
   return (
     <>
@@ -133,13 +144,23 @@ export function TransactionList({ transactions, categories, cards, methodColors,
             currency={currency}
             date={editing.date}
             transaction={editing}
-            onDone={closeEdit}
+            onDone={doneEdit}
           />
         )}
       </Modal>
 
       <Modal open={deleting !== null} onClose={() => setDeleting(null)} title="Delete transaction?">
-        {deleting && <ConfirmDelete transaction={deleting} currency={currency} onDone={() => setDeleting(null)} />}
+        {deleting && (
+          <ConfirmDelete
+            transaction={deleting}
+            currency={currency}
+            onCancel={() => setDeleting(null)}
+            onDone={() => {
+              setDeleting(null);
+              onChanged?.();
+            }}
+          />
+        )}
       </Modal>
     </>
   );
@@ -167,7 +188,7 @@ function AuthorAvatar({ name, image }: { name: string; image: string | null }) {
   );
 }
 
-function ConfirmDelete({ transaction, currency, onDone }: { transaction: Transaction; currency: string; onDone: () => void }) {
+function ConfirmDelete({ transaction, currency, onDone, onCancel }: { transaction: Transaction; currency: string; onDone: () => void; onCancel: () => void }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string>();
   return (
@@ -178,7 +199,7 @@ function ConfirmDelete({ transaction, currency, onDone }: { transaction: Transac
       </p>
       <FormError message={error} />
       <div className="grid grid-cols-2 gap-3">
-        <button type="button" className="btn btn-ghost" onClick={onDone}>
+        <button type="button" className="btn btn-ghost" onClick={onCancel}>
           Cancel
         </button>
         <button

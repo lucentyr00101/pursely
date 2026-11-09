@@ -2,7 +2,7 @@
 // A card purchase goes on the statement that closes on or after its date: the cutoff day belongs to
 // the statement that closes that day. A cutoff past the end of a short month closes on its last day.
 // The statement's month is the budget month the purchase counts in.
-import { addMonths, startOf } from "./dates";
+import { addDays, addMonths, startOf } from "./dates";
 
 export const FIXED_METHODS = ["cash", "gcash", "maya", "others"] as const;
 export type FixedMethod = (typeof FIXED_METHODS)[number];
@@ -62,6 +62,16 @@ export function statementFor(date: string, cutoffDay: number, offset: -1 | 0 | 1
   const here = cutoffIn(date, cutoffDay);
   const auto = date <= here ? here : cutoffIn(addMonths(startOf(date, "month"), 1), cutoffDay);
   return offset === 0 ? auto : cutoffIn(addMonths(startOf(auto, "month"), offset), cutoffDay);
+}
+
+/** The statement `offset` statements after the one a purchase on `today` goes on (negative: before). */
+export function statementAt(today: string, cutoffDay: number, offset: number): string {
+  return cutoffIn(addMonths(startOf(statementFor(today, cutoffDay), "month"), offset), cutoffDay);
+}
+
+/** The first purchase date a statement closing on `close` covers: the day after the one before it. */
+export function statementStart(close: string, cutoffDay: number): string {
+  return addDays(cutoffIn(addMonths(startOf(close, "month"), -1), cutoffDay), 1);
 }
 
 /** The previous, automatic and next statement for a purchase on `date`. */

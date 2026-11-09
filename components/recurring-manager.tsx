@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useActionState, useCallback, useEffect, useState, useTransition } from "react";
-import { CalendarClock, LoaderCircle, Pause, Pencil, Play, Plus, Repeat, Trash2 } from "lucide-react";
+import { CalendarClock, History, LoaderCircle, Pause, Pencil, Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { pauseRecurring, removeRecurring, saveRecurring, type ActionState } from "@/app/actions";
 import type { CategoryNode, PaymentCard, Recurring } from "@/lib/data";
 import type { MethodColors } from "@/lib/statements";
@@ -18,6 +18,7 @@ import { SchedulePreview } from "./schedule-preview";
 import { Select } from "./select";
 import { CategorySelect, TypeToggle } from "./transaction-form";
 import { buildLookup } from "./transaction-list";
+import { TransactionsDialog } from "./transactions-dialog";
 import { FormError } from "./ui";
 
 const UNIT_LABELS: Record<Granularity, [string, string]> = {
@@ -81,6 +82,7 @@ export function RecurringList({ rules, categories, cards, methodColors, currency
 }) {
   const [editing, setEditing] = useState<Recurring | null>(null);
   const [deleting, setDeleting] = useState<Recurring | null>(null);
+  const [history, setHistory] = useState<Recurring | null>(null);
   const [pending, start] = useTransition();
   const [toggling, setToggling] = useState<string>();
   const [error, setError] = useState<string>();
@@ -226,7 +228,7 @@ export function RecurringList({ rules, categories, cards, methodColors, currency
                     )}
                     <button
                       type="button"
-                      className="icon-btn -mr-2 hidden shrink-0 hover:text-danger active:text-danger sm:inline-flex"
+                      className="icon-btn hidden shrink-0 hover:text-danger active:text-danger sm:inline-flex"
                       aria-label="Delete recurring entry"
                       title="Delete"
                       onClick={() => setDeleting(r)}
@@ -237,6 +239,17 @@ export function RecurringList({ rules, categories, cards, methodColors, currency
                 ) : (
                   <div className="flex min-w-0 flex-1 items-center gap-3 py-1.5">{content}</div>
                 )}
+                {/* Last on every row and every size, so it lines up whatever else the row offers. */}
+                <button
+                  type="button"
+                  aria-haspopup="dialog"
+                  className="icon-btn -mr-2 shrink-0"
+                  aria-label={`History of ${label(r)}`}
+                  title="History"
+                  onClick={() => setHistory(r)}
+                >
+                  <History className="size-4" aria-hidden />
+                </button>
               </li>
             </Fragment>
           );
@@ -278,6 +291,18 @@ export function RecurringList({ rules, categories, cards, methodColors, currency
           </>
         )}
       </Modal>
+
+      <TransactionsDialog
+        categories={categories}
+        cards={cards}
+        methodColors={methodColors}
+        currency={currency}
+        canEdit={canEdit}
+        query={history && { recurringId: history.id }}
+        title={history ? label(history) : ""}
+        note="Every entry this rule added. Changing an entry's date detaches it from the rule, so it no longer shows here."
+        onClose={() => setHistory(null)}
+      />
 
       <Modal open={deleting !== null} onClose={() => setDeleting(null)} title="Delete recurring entry?">
         {deleting && <ConfirmDelete rule={deleting} currency={currency} onDone={() => setDeleting(null)} />}

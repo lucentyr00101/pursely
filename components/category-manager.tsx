@@ -1,12 +1,16 @@
 "use client";
 
 import { useActionState, useCallback, useEffect, useState, useTransition } from "react";
-import { Archive, LoaderCircle, Pencil, Plus } from "lucide-react";
+import Link from "next/link";
+import { Archive, LoaderCircle, Pencil, Plus, ReceiptText, Search } from "lucide-react";
 import { removeCategory, saveCategory, type ActionState } from "@/app/actions";
 import { CATEGORY_COLORS, ICON_KEYS, type TxType } from "@/lib/category-defs";
-import type { Category, CategoryNode } from "@/lib/data";
+import type { Category, CategoryNode, CategoryStats } from "@/lib/data";
+import { formatDate } from "@/lib/dates";
+import { formatMoney } from "@/lib/money";
 import { CategoryIcon, ICONS } from "./category-icon";
 import { Modal } from "./modal";
+import { DetailButton, type DetailContext } from "./transactions-dialog";
 import { FormError } from "./ui";
 
 type Dialog =
@@ -14,7 +18,17 @@ type Dialog =
   | { kind: "edit"; category: Category }
   | { kind: "archive"; category: Category };
 
-export function CategoryManager({ categories, canEdit }: { categories: CategoryNode[]; canEdit: boolean }) {
+export function CategoryManager({ stats, month, monthEnd, today, ...context }: DetailContext & {
+  stats: CategoryStats;
+  /** The current month, which the stats cover. */
+  month: string;
+  monthEnd: string;
+  today: string;
+}) {
+  const { categories, canEdit, currency } = context;
+  const monthName = formatDate(month, { month: "long" });
+  const lastUsed = (iso: string | null) =>
+    iso ? `Last used ${formatDate(iso, { month: "short", day: "numeric", year: iso.slice(0, 4) === today.slice(0, 4) ? undefined : "numeric" })}` : "Not used yet";
   const [type, setType] = useState<TxType>("expense");
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const close = useCallback(() => setDialog(null), []);
@@ -65,7 +79,7 @@ export function CategoryManager({ categories, canEdit }: { categories: CategoryN
               <div className="min-w-0 flex-1">
                 <p className="line-clamp-2 font-semibold break-words">{c.name}</p>
                 <p className="text-xs text-subtle">
-                  {c.isSystem ? "Built-in" : "Custom"} · {c.children.length} subcategor{c.children.length === 1 ? "y" : "ies"}
+                  {c.isSystem ? "Built-in" : "Custom"} · {c.children.length} subcategor{c.children.length === 1 ? "y" : "ies"} · {lastUsed(stats[c.id]?.lastUsed ?? null)}
                 </p>
               </div>
               {canEdit && !c.isSystem && <OwnActions category={c} onDialog={setDialog} />}
@@ -78,6 +92,7 @@ export function CategoryManager({ categories, canEdit }: { categories: CategoryN
                   className={`flex items-center rounded-full border border-line text-sm ${s.isSystem ? "px-3 py-1.5 text-muted" : "py-0.5 pr-0.5 pl-3"}`}
                 >
                   {s.name}
+                  {stats[s.id]?.month ? <span className="tabular ml-1.5 text-xs text-subtle">{formatMoney(stats[s.id].month, currency)}</span> : null}
                   {canEdit && !s.isSystem && <OwnActions category={s} onDialog={setDialog} compact />}
                 </li>
               ))}
@@ -94,6 +109,33 @@ export function CategoryManager({ categories, canEdit }: { categories: CategoryN
               </li>
               )}
             </ul>
+
+            <div className="mt-3 flex items-center gap-2 border-t border-line pt-2">
+              <DetailButton
+                context={context}
+                query={{ from: month, to: monthEnd, type: c.type, categoryId: c.id }}
+                title={`${c.name} · ${formatDate(month, { month: "long", year: "numeric" })}`}
+                note="Card purchases count in the month their statement closes."
+                aria-label={`${c.name}: ${formatMoney(stats[c.id]?.month ?? 0, currency)} in ${monthName}, ${stats[c.id]?.count ?? 0} transactions. Show them`}
+                className="-ml-2 flex min-h-11 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-lg px-2 text-left text-sm transition-colors duration-150 hover:bg-sunken active:bg-sunken focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                <ReceiptText className="size-4 shrink-0 text-subtle" aria-hidden />
+                <span className="truncate text-muted">
+                  {monthName}: <span className="tabular font-medium text-fg">{formatMoney(stats[c.id]?.month ?? 0, currency)}</span>
+                  <span className="max-sm:hidden">
+                    {" · "}
+                    {stats[c.id]?.count ?? 0} transaction{stats[c.id]?.count === 1 ? "" : "s"}
+                  </span>
+                </span>
+              </DetailButton>
+              <Link
+                href={`/transactions/search?category=${c.id}`}
+                className="-mr-2 flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-muted transition-colors duration-150 hover:bg-sunken hover:text-fg active:bg-sunken active:text-fg focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                <Search className="size-4" aria-hidden />
+                All time
+              </Link>
+            </div>
           </li>
         ))}
       </ul>

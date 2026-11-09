@@ -196,6 +196,34 @@ export async function pauseRecurring(id: string, paused: boolean): Promise<Actio
   return error ? fail(error) : done();
 }
 
+/** Most transactions a detail view lists; its totals still cover every match. */
+const DETAIL_LIMIT = 200;
+
+const detailSchema = z
+  .object({
+    from: z.string().refine(isIsoDate),
+    to: z.string().refine(isIsoDate),
+    basis: z.enum(["counted", "date"]),
+    type: z.enum(["expense", "income"]),
+    categoryId: idSchema,
+    subcategoryId: z.union([idSchema, z.literal("general")]),
+    paidWith: z.union([idSchema, z.enum(["none", ...FIXED_METHODS])]),
+    recurring: z.enum(["only", "exclude", "excludeExpense"]),
+    recurringId: idSchema,
+    billedLater: z.boolean(),
+  })
+  .partial()
+  .strict();
+
+/** Read-only: the transactions behind a total, for the detail dialogs. Viewers may call it. */
+export async function loadDetail(query: data.DetailQuery): Promise<({ ok: true } & data.DetailResult) | { ok: false; error: string }> {
+  const ctx = await getLedgerContext();
+  if (!ctx) return { ok: false, error: "Your session expired. Sign in again." };
+  const parsed = detailSchema.safeParse(query);
+  if (!parsed.success) return { ok: false, error: BAD_ID };
+  return { ok: true, ...(await data.detailTransactions(ctx.ledgerId, parsed.data, DETAIL_LIMIT)) };
+}
+
 export async function removeTransaction(id: string): Promise<ActionState> {
   if (!isId(id)) return fail(BAD_ID);
   const ctx = await editorContext();

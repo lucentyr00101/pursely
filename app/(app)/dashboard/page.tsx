@@ -1,16 +1,17 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import type { Metadata } from "next";
-import { ArrowRight, Target } from "lucide-react";
+import { ArrowRight, ChevronRight, Target } from "lucide-react";
 import { getToday, getLedger } from "@/lib/session";
 import { getBudgetStatus, getInsight, getSettings, getSummary, listCards, listCategories } from "@/lib/data";
 import { geminiEnabled } from "@/lib/gemini";
-import { endOf, resolveRange, startOf, type RangeParams } from "@/lib/dates";
+import { endOf, formatDate, resolveRange, startOf, type RangeParams } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { AddTransactionButton } from "@/components/add-transaction-button";
 import { BudgetMeter } from "@/components/budget-meter";
 import { CashFlowChart } from "@/components/cash-flow-chart";
 import { CategoryBreakdown } from "@/components/category-breakdown";
+import { DetailButton, type DetailContext } from "@/components/transactions-dialog";
 import { CategoryIcon } from "@/components/category-icon";
 import { InsightCard } from "@/components/insight-card";
 import { RangePicker } from "@/components/range-picker";
@@ -49,6 +50,12 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
   const { scheduled } = summary;
   const projectedNet = net + scheduled.income - scheduled.expense;
   const bills = summary.recurring.expense;
+  const canEdit = ledger.role !== "viewer";
+  const detail: DetailContext = { categories, cards, methodColors, currency, canEdit };
+  const { from, to } = range;
+  const span = from === to ? formatDate(from, { month: "short", day: "numeric", year: "numeric" }) : `${formatDate(from, { month: "short", day: "numeric" })} – ${formatDate(to, { month: "short", day: "numeric", year: "numeric" })}`;
+  const scheduledNote = (amount: number) =>
+    amount ? `Plus ${formatMoney(amount, currency)} scheduled in this range, not added yet.` : undefined;
   const budgeted = budgets
     .filter((b) => b.budget !== null)
     .sort((a, b) => b.spent / b.budget! - a.spent / a.budget!)
@@ -80,19 +87,34 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
           value={formatMoney(summary.expense, currency)}
           dot="var(--series-expense)"
           hint={scheduled.expense ? `+${formatMoney(scheduled.expense, currency)} scheduled` : undefined}
-          note={summary.billedLater ? `${formatMoney(summary.billedLater, currency)} swiped, billed later` : undefined}
+          detail={{ context: detail, query: { from, to, type: "expense" }, title: `Expenses · ${span}`, note: [scheduledNote(scheduled.expense), "Card purchases count on their statement date."].filter(Boolean).join(" ") }}
+          note={
+            summary.billedLater ? (
+              <DetailButton
+                context={detail}
+                query={{ from, to, type: "expense", billedLater: true }}
+                title={`Billed later · ${span}`}
+                note="Card purchases made in this range on a statement that closes after it, so they count later."
+                className="relative z-10 -mx-1 inline-flex min-h-8 cursor-pointer items-center gap-0.5 rounded px-1 text-left underline underline-offset-2 transition-colors duration-150 hover:text-fg active:text-fg focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                {formatMoney(summary.billedLater, currency)} swiped, billed later
+              </DetailButton>
+            ) : undefined
+          }
         />
         <Kpi
           label="Income"
           value={formatMoney(summary.income, currency)}
           dot="var(--series-income)"
           hint={scheduled.income ? `+${formatMoney(scheduled.income, currency)} scheduled` : undefined}
+          detail={{ context: detail, query: { from, to, type: "income" }, title: `Income · ${span}`, note: scheduledNote(scheduled.income) }}
         />
         <Kpi
           label="Net"
           value={formatMoney(net, currency)}
           className={net < 0 ? "text-danger" : "text-success"}
           hint={scheduled.count ? `${formatMoney(projectedNet, currency)} with scheduled` : undefined}
+          detail={{ context: detail, query: { from, to }, title: `All transactions · ${span}`, note: "Card purchases count on their statement date." }}
         />
         <Kpi
           label="Avg. spent per day"
@@ -108,6 +130,7 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
               ? `${formatMoney(bills.posted, currency)} paid · ${formatMoney(bills.scheduled, currency)} to come`
               : `${bills.count} payment${bills.count === 1 ? "" : "s"}`
           }
+          detail={{ context: detail, query: { from, to, type: "expense", recurring: "only" }, title: `Recurring payments · ${span}`, note: scheduledNote(bills.scheduled) }}
           span="col-span-2 lg:col-span-1"
         />
       </dl>
@@ -118,11 +141,20 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
             data={summary.series}
             {...summary.seriesCategories}
             group={range.group}
-            currency={currency}
+            from={from}
+            to={to}
+            detail={detail}
           />
         </Card>
-        <Card title="By category" description="Without recurring payments. Select a category to see subcategories." className="lg:col-span-2">
-          <CategoryBreakdown expense={summary.oneOffExpenseByCategory} income={summary.incomeByCategory} currency={currency} />
+        <Card title="By category" description="Without recurring payments. Select a category to see its subcategories and transactions." className="lg:col-span-2">
+          <CategoryBreakdown
+            {...detail}
+            expense={summary.oneOffExpenseByCategory}
+            income={summary.incomeByCategory}
+            byPaid={summary.oneOffExpenseByPaid}
+            from={from}
+            to={to}
+          />
         </Card>
       </div>
 
@@ -156,24 +188,45 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
   );
 }
 
-function Kpi({ label, value, hint, note, dot, className = "", span = "" }: {
+/**
+ * With `detail`, the value is a button whose hit area stretches over the whole card, so tapping
+ * anywhere opens the transactions behind it; a `note` button sits above that layer.
+ */
+function Kpi({ label, value, hint, note, dot, detail, className = "", span = "" }: {
   label: string;
   value: string;
   hint?: string;
-  note?: string;
+  note?: React.ReactNode;
   dot?: string;
+  detail?: { context: DetailContext; query: React.ComponentProps<typeof DetailButton>["query"]; title: string; note?: string };
   className?: string;
   span?: string;
 }) {
   return (
-    <div className={`glass min-w-0 rounded-2xl p-3 sm:p-4 ${span}`}>
+    <div
+      className={`glass relative min-w-0 rounded-2xl p-3 sm:p-4 ${detail ? "transition-colors duration-150 has-[>dd>button:hover]:bg-sunken has-[>dd>button:active]:bg-sunken" : ""} ${span}`}
+    >
       <dt className="flex items-center gap-2 text-xs text-muted min-[360px]:text-sm">
         {dot && <span aria-hidden className="size-2.5 shrink-0 rounded-sm" style={{ backgroundColor: dot }} />}
         {label}
       </dt>
       <dd title={value} className={`tabular mt-1 truncate text-base font-bold tracking-tight min-[360px]:text-lg sm:text-2xl lg:text-xl xl:text-2xl ${className}`}>
-        {value}
+        {detail ? (
+          <DetailButton
+            context={detail.context}
+            query={detail.query}
+            title={detail.title}
+            note={detail.note}
+            aria-label={`${label}: ${value}. Show transactions`}
+            className="cursor-pointer rounded-2xl text-left after:absolute after:inset-0 after:rounded-2xl focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-ring"
+          >
+            {value}
+          </DetailButton>
+        ) : (
+          value
+        )}
       </dd>
+      {detail && <ChevronRight aria-hidden className="pointer-events-none absolute top-3 right-2 size-4 text-subtle sm:top-4 sm:right-3" />}
       {hint && <dd className="mt-0.5 text-xs text-subtle">{hint}</dd>}
       {note && <dd className="mt-0.5 text-xs text-subtle">{note}</dd>}
     </div>

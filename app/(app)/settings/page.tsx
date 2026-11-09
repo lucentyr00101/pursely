@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { getToday, getLedger } from "@/lib/session";
-import { getSettings, listCards } from "@/lib/data";
+import { getSettings, listCards, listCategories } from "@/lib/data";
 import { getHousehold, listOutgoingInvites } from "@/lib/household";
 import { startOf } from "@/lib/dates";
 import { CardManager } from "@/components/card-manager";
@@ -54,11 +54,15 @@ async function CurrencyCard() {
 }
 
 async function CardsSection() {
-  const ledger = await getLedger();
-  const [cards, { methodColors }] = await Promise.all([listCards(ledger.ledgerId), getSettings(ledger.ledgerId)]);
+  const [ledger, today] = await Promise.all([getLedger(), getToday()]);
+  const [cards, { methodColors, currency }, categories] = await Promise.all([
+    listCards(ledger.ledgerId, { includeArchived: true }),
+    getSettings(ledger.ledgerId),
+    listCategories(ledger.ledgerId),
+  ]);
   return (
     <Card title="Payment methods" description="The color shows on each transaction. Purchases on a card count in the month their statement closes.">
-      <CardManager cards={cards} methodColors={methodColors} canEdit={ledger.role !== "viewer"} />
+      <CardManager today={today} cards={cards} categories={categories} methodColors={methodColors} currency={currency} canEdit={ledger.role !== "viewer"} />
     </Card>
   );
 }

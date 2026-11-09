@@ -1,14 +1,15 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import type { Metadata } from "next";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, ReceiptText } from "lucide-react";
 import { getToday, getLedger } from "@/lib/session";
-import { getBudgetLimit, getBudgetStatus, getSettings } from "@/lib/data";
+import { getBudgetLimit, getBudgetStatus, getSettings, listCards, listCategories } from "@/lib/data";
 import { addMonths, endOf, formatDate, isIsoDate, startOf } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { BudgetForm } from "@/components/budget-row";
 import { BudgetMeter } from "@/components/budget-meter";
 import { CategoryIcon } from "@/components/category-icon";
+import { DetailButton } from "@/components/transactions-dialog";
 import { Card, PageHeader, Skeleton } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Budgets" };
@@ -39,12 +40,17 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
   const upcoming = month > thisMonth;
   const readOnly = past || upcoming;
 
-  const [rows, { currency }, budgetLimit] = await Promise.all([
-    getBudgetStatus(ledger.ledgerId, month, endOf(month, "month"), { past }),
+  const monthEnd = endOf(month, "month");
+  const [rows, { currency, methodColors }, budgetLimit, categories, cards] = await Promise.all([
+    getBudgetStatus(ledger.ledgerId, month, monthEnd, { past }),
     getSettings(ledger.ledgerId),
     getBudgetLimit(ledger.ledgerId),
+    listCategories(ledger.ledgerId),
+    listCards(ledger.ledgerId, { includeArchived: true }),
   ]);
   const canEdit = ledger.role !== "viewer";
+  const detail = { categories, cards, methodColors, currency, canEdit };
+  const monthName = formatDate(month, { month: "long", year: "numeric" });
   // The limit is today's recurring net, which says nothing about another month.
   const limit = readOnly ? null : budgetLimit;
   const withBudget = rows.filter((r) => r.budget !== null);
@@ -122,7 +128,20 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-start gap-3">
-                  <p className="line-clamp-2 min-w-0 flex-1 pt-2.5 font-medium break-words">{r.name}</p>
+                  {/* The name opens what was spent, so the row keeps one control for the limit. */}
+                  <div className="min-w-0 flex-1">
+                    <DetailButton
+                      context={detail}
+                      query={{ from: month, to: monthEnd, type: "expense", categoryId: r.categoryId }}
+                      title={`${r.name} · ${monthName}`}
+                      note="Card purchases count in the month their statement closes. Includes recurring payments."
+                      aria-label={`${r.name}: show ${monthName} transactions`}
+                      className="group -ml-1 flex min-h-11 max-w-full cursor-pointer items-center gap-1.5 rounded-lg px-1 text-left font-medium transition-colors duration-150 hover:text-primary active:text-primary focus-visible:outline-2 focus-visible:outline-ring"
+                    >
+                      <span className="line-clamp-2 break-words">{r.name}</span>
+                      <ReceiptText className="size-4 shrink-0 text-subtle transition-colors duration-150 group-hover:text-primary group-active:text-primary" aria-hidden />
+                    </DetailButton>
+                  </div>
                   {readOnly ? (
                     <p className={`tabular shrink-0 pt-2.5 text-sm ${r.budget === null ? "text-muted" : "font-medium"}`}>
                       {r.budget === null ? "No limit" : formatMoney(r.budget, currency)}
