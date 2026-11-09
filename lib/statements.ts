@@ -74,6 +74,18 @@ export function statementStart(close: string, cutoffDay: number): string {
   return addDays(cutoffIn(addMonths(startOf(close, "month"), -1), cutoffDay), 1);
 }
 
+/** The payment due date of a statement closing on `close`: the first `dueDay` after it, clamped in short months. */
+export function dueFor(close: string, dueDay: number): string {
+  const here = cutoffIn(close, dueDay);
+  return here > close ? here : cutoffIn(addMonths(startOf(close, "month"), 1), dueDay);
+}
+
+/** The latest statement that has closed by `today`; one closing today counts as closed. */
+export function lastClosed(today: string, cutoffDay: number): string {
+  const current = statementFor(today, cutoffDay);
+  return current === today ? current : statementAt(today, cutoffDay, -1);
+}
+
 /** The previous, automatic and next statement for a purchase on `date`. */
 export function statementChoices(date: string, cutoffDay: number): [string, string, string] {
   return [statementFor(date, cutoffDay, -1), statementFor(date, cutoffDay), statementFor(date, cutoffDay, 1)];

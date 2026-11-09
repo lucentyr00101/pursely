@@ -2,7 +2,7 @@ import "server-only";
 import { ObjectId, type AnyBulkWriteOperation, type ClientSession, type Filter } from "mongodb";
 import { db } from "./db";
 import { SYSTEM_CATEGORIES, type IconKey, type TxType } from "./category-defs";
-import { addMonths, buckets, startOf, toIso, toUtc, type Granularity, type Range } from "./dates";
+import { addDays, addMonths, buckets, startOf, toIso, toUtc, type Granularity, type Range } from "./dates";
 import { DEFAULT_CURRENCY, formatMoney } from "./money";
 import { firstOccurrence, keepEnd, monthlyTotals, occurrence } from "./recurring";
 import {
@@ -10,7 +10,9 @@ import {
   DEFAULT_METHOD_COLORS,
   methodLabel,
   cutoffIn,
+  dueFor,
   isFixedMethod,
+  lastClosed,
   statementChoices,
   statementFor,
   type FixedMethod,
@@ -91,6 +93,8 @@ type CardDoc = {
   name: string;
   last4: string;
   cutoffDay: number; // 1-31, the day its statement closes
+  dueDay?: number | null; // 1-31, the day payment is due after a statement closes; missing means not set
+  paidStatements?: Date[]; // closing dates of statements marked paid; missing means none
   color?: MethodColor; // missing on cards saved before colors existed
   archivedAt: Date | null;
   createdAt: Date;
@@ -418,8 +422,18 @@ function escapeRegex(text: string) {
 
 // ---------- Cards ----------
 
-export type PaymentCard = { id: string; name: string; last4: string; cutoffDay: number; color: MethodColor; archived: boolean };
-export type CardInput = { name: string; last4: string; cutoffDay: number; color: MethodColor };
+export type PaymentCard = {
+  id: string;
+  name: string;
+  last4: string;
+  cutoffDay: number;
+  dueDay: number | null;
+  /** Closing dates of the statements marked paid. Marking one paid adds no transaction. */
+  paid: string[];
+  color: MethodColor;
+  archived: boolean;
+};
+export type CardInput = { name: string; last4: string; cutoffDay: number; dueDay: number | null; color: MethodColor };
 
 function toPaymentCard(doc: CardDoc): PaymentCard {
   return {
@@ -427,6 +441,8 @@ function toPaymentCard(doc: CardDoc): PaymentCard {
     name: doc.name,
     last4: doc.last4,
     cutoffDay: doc.cutoffDay,
+    dueDay: doc.dueDay ?? null,
+    paid: (doc.paidStatements ?? []).map(toIso),
     color: doc.color ?? DEFAULT_CARD_COLOR,
     archived: doc.archivedAt !== null,
   };
@@ -449,6 +465,45 @@ async function findCard(ledgerId: string, id: unknown) {
 async function usableCard(ledgerId: string, id: unknown, current: ObjectId | undefined) {
   const card = await findCard(ledgerId, id);
   return card && (card.archivedAt === null || current?.equals(card._id)) ? card : null;
+}
+
+/** Marks a statement paid or unpaid. Only a statement that has closed can be paid. */
+export async function setStatementPaid(ledgerId: string, id: string, statement: string, paid: boolean, today: string): Promise<string | null> {
+  const card = await findCard(ledgerId, id);
+  if (!card) return "Card not found.";
+  if (statement !== cutoffIn(statement, card.cutoffDay)) return "Pick a valid statement.";
+  if (paid && statement > today) return "That statement hasn't closed yet.";
+  const date = toUtc(statement);
+  await cards.updateOne({ _id: card._id }, paid ? { $addToSet: { paidStatements: date } } : { $pull: { paidStatements: date } });
+  return null;
+}
+
+export type StatementDue = { cardId: string; statement: string; due: string; amount: number };
+
+/**
+ * Each active card's last closed statement when it has a balance, isn't marked paid, and is due
+ * within `days` days or overdue. The balance is what the app recorded on that statement.
+ */
+export async function statementsDue(ledgerId: string, today: string, days = 7): Promise<StatementDue[]> {
+  const docs = await cards.find({ ledgerId, archivedAt: null, dueDay: { $gte: 1 } }).toArray();
+  const soon = addDays(today, days);
+  const candidates = docs.flatMap((c) => {
+    const statement = lastClosed(today, c.cutoffDay);
+    const due = dueFor(statement, c.dueDay!);
+    const paid = (c.paidStatements ?? []).some((d) => toIso(d) === statement);
+    return paid || due > soon ? [] : [{ card: c, statement, due }];
+  });
+  if (!candidates.length) return [];
+  const totals = await transactions
+    .aggregate<{ _id: { card: ObjectId; statement: Date }; total: number }>([
+      { $match: { ledgerId, $or: candidates.map((c) => ({ cardId: c.card._id, statementDate: toUtc(c.statement) })) } },
+      { $group: { _id: { card: "$cardId", statement: "$statementDate" }, total: { $sum: "$amount" } } },
+    ])
+    .toArray();
+  return candidates.flatMap(({ card, statement, due }) => {
+    const amount = totals.find((t) => t._id.card.equals(card._id) && toIso(t._id.statement) === statement)?.total ?? 0;
+    return amount ? [{ cardId: card._id.toHexString(), statement, due, amount }] : [];
+  });
 }
 
 export async function createCard(ledgerId: string, input: CardInput): Promise<string | null> {
@@ -868,6 +923,35 @@ export async function categoryStats(ledgerId: string, monthStart: string, monthE
     }
   }
   return stats;
+}
+
+export type PeriodTotals = { expense: number; income: number; recurringExpense: number };
+
+/** Totals counted in a span the way the dashboard counts them, for comparing periods. */
+export async function periodTotals(ledgerId: string, from: string, to: string): Promise<PeriodTotals> {
+  const rows = await transactions
+    .aggregate<{ _id: { type: TxType; recurring: boolean }; total: number }>([
+      { $match: countedIn(ledgerId, from, to) },
+      { $group: { _id: { type: "$type", recurring: { $ne: [{ $type: "$recurringId" }, "missing"] } }, total: { $sum: "$amount" } } },
+    ])
+    .toArray();
+  const totals: PeriodTotals = { expense: 0, income: 0, recurringExpense: 0 };
+  for (const r of rows) {
+    totals[r._id.type] += r.total;
+    if (r._id.type === "expense" && r._id.recurring) totals.recurringExpense += r.total;
+  }
+  return totals;
+}
+
+/** Expense counted per top-level category over [from, to], like budget spend. */
+export async function spendByCategory(ledgerId: string, from: string, to: string): Promise<Record<string, number>> {
+  const rows = await transactions
+    .aggregate<{ _id: ObjectId; total: number }>([
+      { $match: countedIn(ledgerId, from, to, { type: "expense" }) },
+      { $group: { _id: "$categoryId", total: { $sum: "$amount" } } },
+    ])
+    .toArray();
+  return Object.fromEntries(rows.map((r) => [r._id.toHexString(), r.total]));
 }
 
 export type DayTotal = { date: string; expense: number; income: number };

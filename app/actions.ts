@@ -104,6 +104,11 @@ const cardSchema = z.object({
     .int("Pick a cutoff day from 1 to 31.")
     .min(1, "Pick a cutoff day from 1 to 31.")
     .max(31, "Pick a cutoff day from 1 to 31."),
+  // Optional: an empty choice means not set.
+  dueDay: z
+    .union([z.literal(""), z.coerce.number().int().min(1).max(31)], "Pick a due day from 1 to 31.")
+    .optional()
+    .transform((v) => (typeof v === "number" ? v : null)),
   color: z.enum(METHOD_COLORS, "Pick a color."),
 });
 
@@ -278,6 +283,14 @@ export async function saveCard(_: ActionState, formData: FormData): Promise<Acti
     typeof id === "string" && id
       ? await data.updateCard(ctx.ledgerId, id, parsed.data, await getToday())
       : await data.createCard(ctx.ledgerId, parsed.data);
+  return error ? fail(error) : done();
+}
+
+export async function markStatementPaid(cardId: string, statement: string, paid: boolean): Promise<ActionState> {
+  if (!isId(cardId) || !isIsoDate(statement) || typeof paid !== "boolean") return fail(BAD_ID);
+  const ctx = await editorContext();
+  if (isFailure(ctx)) return ctx;
+  const error = await data.setStatementPaid(ctx.ledgerId, cardId, statement, paid, await getToday());
   return error ? fail(error) : done();
 }
 

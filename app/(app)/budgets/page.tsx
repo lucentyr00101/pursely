@@ -3,8 +3,8 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ChevronLeft, ChevronRight, ReceiptText } from "lucide-react";
 import { getToday, getLedger } from "@/lib/session";
-import { getBudgetLimit, getBudgetStatus, getSettings, listCards, listCategories } from "@/lib/data";
-import { addMonths, endOf, formatDate, isIsoDate, startOf } from "@/lib/dates";
+import { getBudgetLimit, getBudgetStatus, getSettings, listCards, listCategories, spendByCategory } from "@/lib/data";
+import { addDays, addMonths, endOf, formatDate, isIsoDate, startOf } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { BudgetForm } from "@/components/budget-row";
 import { BudgetMeter } from "@/components/budget-meter";
@@ -41,13 +41,18 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
   const readOnly = past || upcoming;
 
   const monthEnd = endOf(month, "month");
-  const [rows, { currency, methodColors }, budgetLimit, categories, cards] = await Promise.all([
+  // The three months before this one, counted the same way as budget spend.
+  const averageFrom = addMonths(month, -3);
+  const averageTo = addDays(month, -1);
+  const [rows, { currency, methodColors }, budgetLimit, categories, cards, history] = await Promise.all([
     getBudgetStatus(ledger.ledgerId, month, monthEnd, { past }),
     getSettings(ledger.ledgerId),
     getBudgetLimit(ledger.ledgerId),
     listCategories(ledger.ledgerId),
     listCards(ledger.ledgerId, { includeArchived: true }),
+    spendByCategory(ledger.ledgerId, averageFrom, averageTo),
   ]);
+  const averageOf = (categoryId: string) => Math.round((history[categoryId] ?? 0) / 3);
   const canEdit = ledger.role !== "viewer";
   const detail = { categories, cards, methodColors, currency, canEdit };
   const monthName = formatDate(month, { month: "long", year: "numeric" });
@@ -156,6 +161,11 @@ async function Budgets({ searchParams }: { searchParams: PageProps<"/budgets">["
                   </div>
                 ) : (
                   <p className="tabular mt-1 text-sm text-muted">Spent {formatMoney(r.spent, currency)}</p>
+                )}
+                {averageOf(r.categoryId) > 0 && (
+                  <p className="tabular mt-1 text-xs text-subtle">
+                    3-month average: {formatMoney(averageOf(r.categoryId), currency)}
+                  </p>
                 )}
               </div>
             </li>

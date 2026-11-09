@@ -1,11 +1,11 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import type { Metadata } from "next";
-import { ArrowRight, ChevronRight, Target } from "lucide-react";
+import { ArrowRight, ChevronRight, OctagonAlert, Target, TrendingDown, TrendingUp, TriangleAlert } from "lucide-react";
 import { getToday, getLedger } from "@/lib/session";
-import { getBudgetStatus, getInsight, getSettings, getSummary, listCards, listCategories } from "@/lib/data";
+import { getBudgetStatus, getInsight, getSettings, getSummary, listCards, listCategories, periodTotals, statementsDue, type BudgetStatus, type PeriodTotals } from "@/lib/data";
 import { geminiEnabled } from "@/lib/gemini";
-import { endOf, formatDate, resolveRange, startOf, type RangeParams } from "@/lib/dates";
+import { comparison, endOf, formatDate, resolveRange, startOf, type RangeParams } from "@/lib/dates";
 import { formatMoney } from "@/lib/money";
 import { AddTransactionButton } from "@/components/add-transaction-button";
 import { BudgetMeter } from "@/components/budget-meter";
@@ -13,6 +13,7 @@ import { CashFlowChart } from "@/components/cash-flow-chart";
 import { CategoryBreakdown } from "@/components/category-breakdown";
 import { DetailButton, type DetailContext } from "@/components/transactions-dialog";
 import { CategoryIcon } from "@/components/category-icon";
+import { StatementsDue } from "@/components/card-manager";
 import { InsightCard } from "@/components/insight-card";
 import { RangePicker } from "@/components/range-picker";
 import { Card, EmptyState, PageHeader, Skeleton } from "@/components/ui";
@@ -37,14 +38,27 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
   const range = resolveRange(params, today);
 
   const ai = geminiEnabled();
-  const [summary, settings, categories, budgets, insight, cards] = await Promise.all([
+  const compare = comparison(range, today);
+  const [summary, settings, categories, budgets, insight, cards, due, periods] = await Promise.all([
     getSummary(ledger.ledgerId, range),
     getSettings(ledger.ledgerId),
     listCategories(ledger.ledgerId),
     getBudgetStatus(ledger.ledgerId, startOf(today, "month"), endOf(today, "month")),
     ai ? getInsight(ledger.ledgerId) : null,
     listCards(ledger.ledgerId, { includeArchived: true }),
+    statementsDue(ledger.ledgerId, today),
+    compare &&
+      Promise.all([
+        periodTotals(ledger.ledgerId, compare.current.from, compare.current.to),
+        periodTotals(ledger.ledgerId, compare.previous.from, compare.previous.to),
+      ]),
   ]);
+  const trendOf = (key: keyof PeriodTotals, goodWhenUp: boolean): Trend | undefined => {
+    if (!compare || !periods) return undefined;
+    const [now, before] = periods.map((p) => p[key]);
+    if (!before) return undefined;
+    return { change: Math.round(((now - before) / before) * 100), label: compare.label, goodWhenUp };
+  };
   const { currency, methodColors } = settings;
   const net = summary.income - summary.expense;
   const { scheduled } = summary;
@@ -71,6 +85,9 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
         actions={<AddTransactionButton categories={categories} cards={cards} methodColors={methodColors} currency={currency} date={today} canEdit={ledger.role !== "viewer"} />}
       />
 
+      <StatementsDue items={due} today={today} context={detail} />
+      <BudgetAlerts budgets={budgets} currency={currency} />
+
       {ai && <InsightCard initial={insight} />}
 
       {/* Keyed so its local selection resets to the range actually shown; the page stays mounted across navigations. */}
@@ -87,6 +104,7 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
           value={formatMoney(summary.expense, currency)}
           dot="var(--series-expense)"
           hint={scheduled.expense ? `+${formatMoney(scheduled.expense, currency)} scheduled` : undefined}
+          trend={trendOf("expense", false)}
           detail={{ context: detail, query: { from, to, type: "expense" }, title: `Expenses · ${span}`, note: [scheduledNote(scheduled.expense), "Card purchases count on their statement date."].filter(Boolean).join(" ") }}
           note={
             summary.billedLater ? (
@@ -107,6 +125,7 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
           value={formatMoney(summary.income, currency)}
           dot="var(--series-income)"
           hint={scheduled.income ? `+${formatMoney(scheduled.income, currency)} scheduled` : undefined}
+          trend={trendOf("income", true)}
           detail={{ context: detail, query: { from, to, type: "income" }, title: `Income · ${span}`, note: scheduledNote(scheduled.income) }}
         />
         <Kpi
@@ -130,6 +149,7 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
               ? `${formatMoney(bills.posted, currency)} paid · ${formatMoney(bills.scheduled, currency)} to come`
               : `${bills.count} payment${bills.count === 1 ? "" : "s"}`
           }
+          trend={trendOf("recurringExpense", false)}
           detail={{ context: detail, query: { from, to, type: "expense", recurring: "only" }, title: `Recurring payments · ${span}`, note: scheduledNote(bills.scheduled) }}
           span="col-span-2 lg:col-span-1"
         />
@@ -192,10 +212,79 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/dashboard
  * With `detail`, the value is a button whose hit area stretches over the whole card, so tapping
  * anywhere opens the transactions behind it; a `note` button sits above that layer.
  */
-function Kpi({ label, value, hint, note, dot, detail, className = "", span = "" }: {
+/** This month's budgets at 80% or more, worst first. Always this month, whatever range the page shows. */
+function BudgetAlerts({ budgets, currency }: { budgets: BudgetStatus[]; currency: string }) {
+  const hot = budgets
+    .filter((b) => b.budget && b.spent >= b.budget * 0.8)
+    .sort((a, b) => b.spent / b.budget! - a.spent / a.budget!);
+  if (!hot.length) return null;
+  const over = hot.filter((b) => b.spent > b.budget!);
+  const close = hot.filter((b) => b.spent <= b.budget!);
+  const Icon = over.length ? OctagonAlert : TriangleAlert;
+  return (
+    <section
+      aria-label="Budget alerts"
+      role={over.length ? "alert" : undefined}
+      className={`flex items-start gap-3 rounded-2xl border px-3 py-2 sm:px-4 ${over.length ? "border-danger/40 bg-danger-soft" : "border-warning/40 bg-warning-soft"}`}
+    >
+      <Icon className={`mt-3 size-5 shrink-0 ${over.length ? "text-danger" : "text-warning-strong"}`} aria-hidden />
+      <div className="min-w-0 flex-1 py-2 text-sm">
+        {over.length > 0 && (
+          <p>
+            <span className="font-medium text-danger">Over budget:</span>{" "}
+            {over.map((b, i) => (
+              <span key={b.categoryId}>
+                {i > 0 && ", "}
+                <span className="font-medium">{b.name}</span>{" "}
+                <span className="tabular text-muted">by {formatMoney(b.spent - b.budget!, currency)}</span>
+              </span>
+            ))}
+          </p>
+        )}
+        {close.length > 0 && (
+          <p className={over.length ? "mt-1" : ""}>
+            <span className="font-medium">Close to limit:</span>{" "}
+            {close.map((b, i) => (
+              <span key={b.categoryId}>
+                {i > 0 && ", "}
+                <span className="font-medium">{b.name}</span>{" "}
+                <span className="tabular text-muted">{Math.floor((b.spent / b.budget!) * 100)}% used</span>
+              </span>
+            ))}
+          </p>
+        )}
+      </div>
+      <Link href="/budgets" className="btn btn-ghost h-11 shrink-0 px-3 sm:mt-1 sm:h-9">
+        Budgets
+      </Link>
+    </section>
+  );
+}
+
+type Trend = { change: number; label: string; goodWhenUp: boolean };
+
+/** "12% more than Oct", colored by whether that is good news, with an arrow so color isn't the only cue. */
+function TrendLine({ trend }: { trend: Trend }) {
+  const { change, label, goodWhenUp } = trend;
+  const up = change > 0;
+  const tone = change === 0 ? "text-subtle" : up === goodWhenUp ? "text-success" : "text-danger";
+  const Icon = up ? TrendingUp : TrendingDown;
+  return (
+    <dd className={`mt-0.5 flex items-start gap-1 text-xs ${tone}`}>
+      {change !== 0 && <Icon className="mt-px size-3.5 shrink-0" aria-hidden />}
+      <span>
+        {change === 0 ? "Same as " : `${Math.abs(change)}% ${up ? "more" : "less"} than `}
+        <span className="whitespace-nowrap">{label}</span>
+      </span>
+    </dd>
+  );
+}
+
+function Kpi({ label, value, hint, note, trend, dot, detail, className = "", span = "" }: {
   label: string;
   value: string;
   hint?: string;
+  trend?: Trend;
   note?: React.ReactNode;
   dot?: string;
   detail?: { context: DetailContext; query: React.ComponentProps<typeof DetailButton>["query"]; title: string; note?: string };
@@ -227,6 +316,7 @@ function Kpi({ label, value, hint, note, dot, detail, className = "", span = "" 
         )}
       </dd>
       {detail && <ChevronRight aria-hidden className="pointer-events-none absolute top-3 right-2 size-4 text-subtle sm:top-4 sm:right-3" />}
+      {trend && <TrendLine trend={trend} />}
       {hint && <dd className="mt-0.5 text-xs text-subtle">{hint}</dd>}
       {note && <dd className="mt-0.5 text-xs text-subtle">{note}</dd>}
     </div>

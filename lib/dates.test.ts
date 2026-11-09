@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { addMonths, buckets, daysBetween, endOf, isIsoDate, resolveRange, startOf } from "./dates";
+import { addMonths, buckets, comparison, daysBetween, endOf, isIsoDate, resolveRange, startOf } from "./dates";
 
 describe("addMonths", () => {
   test("clamps to the last day of a shorter month", () => {
@@ -70,5 +70,30 @@ describe("resolveRange", () => {
     const r = resolveRange({ preset: "custom", from: "2006-01-01", to: "2025-12-31", group: "day" }, today);
     expect(r.group).toBe("month");
     expect(r.groupAdjusted).toBe(true);
+  });
+});
+
+describe("comparison", () => {
+  test("a finished month compares with the whole month before", () => {
+    const c = comparison({ preset: "month", from: "2026-10-01", to: "2026-10-31" }, "2026-11-11");
+    expect(c).toEqual({ current: { from: "2026-10-01", to: "2026-10-31" }, previous: { from: "2026-09-01", to: "2026-09-30" }, label: "Sep" });
+  });
+  test("a running month compares the same days so far", () => {
+    const c = comparison({ preset: "month", from: "2026-11-01", to: "2026-11-30" }, "2026-11-11");
+    expect(c?.current).toEqual({ from: "2026-11-01", to: "2026-11-11" });
+    expect(c?.previous).toEqual({ from: "2026-10-01", to: "2026-10-11" });
+    expect(c?.label).toBe("Oct 1–11");
+  });
+  test("a running March compares with all of a shorter February", () => {
+    const c = comparison({ preset: "month", from: "2026-03-01", to: "2026-03-31" }, "2026-03-30");
+    expect(c?.previous).toEqual({ from: "2026-02-01", to: "2026-02-28" });
+  });
+  test("other ranges compare with the same number of days before", () => {
+    const c = comparison({ preset: "last", from: "2026-10-13", to: "2026-11-11" }, "2026-11-11");
+    expect(c?.previous).toEqual({ from: "2026-09-13", to: "2026-10-12" });
+    expect(c?.label).toBe("Sep 13 – Oct 12");
+  });
+  test("a range that hasn't started has nothing to compare", () => {
+    expect(comparison({ preset: "month", from: "2026-12-01", to: "2026-12-31" }, "2026-11-11")).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cutoffIn, statementAt, statementChoices, statementFor, statementStart } from "./statements";
+import { cutoffIn, dueFor, lastClosed, statementAt, statementChoices, statementFor, statementStart } from "./statements";
 
 describe("cutoffIn", () => {
   test("uses the cutoff day in the month", () => {
@@ -54,5 +54,29 @@ describe("statementStart", () => {
   });
   test("follows a clamped cutoff in a short month", () => {
     expect(statementStart("2026-03-31", 31)).toBe("2026-03-01");
+  });
+});
+
+describe("dueFor", () => {
+  test("is the first due day after the statement closes", () => {
+    expect(dueFor("2026-11-28", 15)).toBe("2026-12-15");
+    expect(dueFor("2026-11-05", 25)).toBe("2026-11-25");
+  });
+  test("a due day equal to the cutoff falls a month later", () => {
+    expect(dueFor("2026-11-15", 15)).toBe("2026-12-15");
+  });
+  test("clamps in short months", () => {
+    expect(dueFor("2026-01-31", 30)).toBe("2026-02-28");
+    expect(dueFor("2026-02-28", 31)).toBe("2026-03-31");
+  });
+});
+
+describe("lastClosed", () => {
+  test("is the previous statement while the current one is open", () => {
+    expect(lastClosed("2026-11-09", 28)).toBe("2026-10-28");
+    expect(lastClosed("2026-11-29", 28)).toBe("2026-11-28");
+  });
+  test("a statement closing today counts as closed", () => {
+    expect(lastClosed("2026-11-28", 28)).toBe("2026-11-28");
   });
 });

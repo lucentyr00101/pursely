@@ -204,6 +204,50 @@ export function resolveRange(params: RangeParams, today: string): Range {
   };
 }
 
+/**
+ * The period to compare `range` with: the one before it, of the same kind. While `range` is still
+ * running, both cover only its days so far, so half a month isn't compared with a whole one.
+ * Returns the current and previous spans and a short label for the previous one.
+ */
+export function comparison(range: Pick<Range, "preset" | "from" | "to">, today: string): {
+  current: { from: string; to: string };
+  previous: { from: string; to: string };
+  label: string;
+} | null {
+  const { preset, from, to } = range;
+  if (from > today) return null;
+  let prevFrom: string;
+  let prevTo: string;
+  if (preset === "week" || preset === "month" || preset === "year") {
+    prevFrom = next(from, preset, -1);
+    prevTo = addDays(from, -1);
+  } else {
+    const days = daysBetween(from, to);
+    prevFrom = addDays(from, -days);
+    prevTo = addDays(from, -1);
+  }
+  const partial = to > today;
+  const end = partial ? today : to;
+  if (partial) {
+    const cut = addDays(prevFrom, daysBetween(from, end) - 1);
+    if (cut < prevTo) prevTo = cut;
+  }
+  const label = !partial && preset === "month"
+    ? formatDate(prevFrom, { month: "short" })
+    : !partial && preset === "year"
+      ? prevFrom.slice(0, 4)
+      : shortRange(prevFrom, prevTo);
+  return { current: { from, to: end }, previous: { from: prevFrom, to: prevTo }, label };
+}
+
+/** "Oct 1–9", "Oct 27 – Nov 2" or, across years, the full range: short enough for a one-line note. */
+function shortRange(from: string, to: string): string {
+  if (from === to) return formatDate(from, { month: "short", day: "numeric" });
+  if (from.slice(0, 7) === to.slice(0, 7)) return `${formatDate(from, { month: "short", day: "numeric" })}–${Number(to.slice(8))}`;
+  if (from.slice(0, 4) === to.slice(0, 4)) return `${formatDate(from, { month: "short", day: "numeric" })} – ${formatDate(to, { month: "short", day: "numeric" })}`;
+  return formatRange(from, to);
+}
+
 const UNIT_LABEL: Record<Granularity, string> = { day: "day", week: "week", month: "month", year: "year" };
 
 function describeRange(preset: Preset, from: string, to: string, n: number, unit: Granularity): string {
