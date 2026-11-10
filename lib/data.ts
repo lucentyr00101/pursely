@@ -101,7 +101,8 @@ type CardDoc = {
   updatedAt: Date;
 };
 /** The latest Gemini overview for a ledger, kept so the dashboard doesn't spend free-tier quota on every load. */
-type InsightDoc = { _id: string; overview: string; steps: string[]; nextMonth: string; createdAt: Date }; // _id = ledgerId
+// _id = ledgerId. `attemptedAt` is the last time a generation was started, which can precede any overview.
+type InsightDoc = { _id: string; overview?: string; steps?: string[]; nextMonth?: string; createdAt?: Date; attemptedAt?: Date };
 
 const categories = db.collection<CategoryDoc>("categories");
 const transactions = db.collection<TransactionDoc>("transactions");
@@ -272,14 +273,42 @@ export type Insight = { overview: string; steps: string[]; nextMonth: string; cr
 export async function getInsight(ledgerId: string): Promise<Insight | null> {
   const doc = await insights.findOne({ _id: ledgerId });
   // Docs saved in the earlier summary/tips shape have no overview; they're regenerated on request.
-  if (!doc?.overview) return null;
-  return { overview: doc.overview, steps: doc.steps, nextMonth: doc.nextMonth, createdAt: doc.createdAt.toISOString() };
+  if (!doc?.overview || !doc.createdAt) return null;
+  return { overview: doc.overview, steps: doc.steps ?? [], nextMonth: doc.nextMonth ?? "", createdAt: doc.createdAt.toISOString() };
 }
 
 export async function saveInsight(ledgerId: string, insight: Omit<Insight, "createdAt">): Promise<Insight> {
   const createdAt = new Date();
-  await insights.replaceOne({ _id: ledgerId }, { ...insight, createdAt }, { upsert: true });
+  // $set rather than a replace, so the attempt time that holds the cooldown stays.
+  await insights.updateOne({ _id: ledgerId }, { $set: { ...insight, createdAt } }, { upsert: true });
   return { ...insight, createdAt: createdAt.toISOString() };
+}
+
+/**
+ * Takes the ledger's turn to generate an overview: 0 when the caller may go ahead, otherwise the
+ * milliseconds until the next turn. One atomic write, so two requests at once can't both get through.
+ */
+export async function claimInsight(ledgerId: string, cooldownMs: number): Promise<number> {
+  const now = new Date();
+  try {
+    // No match on a ledger still cooling down, so the upsert tries to insert its _id again and fails.
+    await insights.updateOne(
+      { _id: ledgerId, attemptedAt: { $not: { $gt: new Date(+now - cooldownMs) } } },
+      { $set: { attemptedAt: now } },
+      { upsert: true },
+    );
+    return 0;
+  } catch (error) {
+    if ((error as { code?: number })?.code !== 11000) throw error;
+    const doc = await insights.findOne({ _id: ledgerId }, { projection: { attemptedAt: 1 } });
+    // The winner's clock can be a moment ahead of ours, hence the upper bound.
+    return Math.min(cooldownMs, Math.max(1, (doc?.attemptedAt ? +doc.attemptedAt + cooldownMs : 0) - +now));
+  }
+}
+
+/** Moves the ledger's next turn to `at`, for a generation that failed and may be retried sooner. */
+export async function retryInsightAt(ledgerId: string, at: Date, cooldownMs: number): Promise<void> {
+  await insights.updateOne({ _id: ledgerId }, { $set: { attemptedAt: new Date(+at - cooldownMs) } });
 }
 
 // ---------- Categories ----------
