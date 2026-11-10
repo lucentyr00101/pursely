@@ -2,10 +2,10 @@ import { Suspense } from "react";
 import type { Metadata } from "next";
 import { getToday, getLedger } from "@/lib/session";
 import { getSettings, listCards, listCategories } from "@/lib/data";
-import { getHousehold, listOutgoingInvites } from "@/lib/household";
+import { getDeletionPlan, getHousehold, listOutgoingInvites } from "@/lib/household";
 import { startOf } from "@/lib/dates";
 import { CardManager } from "@/components/card-manager";
-import { CurrencyForm, ExportForm } from "@/components/settings-forms";
+import { CurrencyForm, DeleteAccount, ExportForm, ImportForm } from "@/components/settings-forms";
 import { HouseholdCard } from "@/components/household-card";
 import { InstallAppCard } from "@/components/install-app";
 import { LegalLinks } from "@/components/legal-links";
@@ -36,7 +36,13 @@ export default function SettingsPage() {
         <Suspense fallback={<Skeleton className="h-32" />}>
           <ExportCard />
         </Suspense>
+        <Suspense fallback={null}>
+          <ImportCard />
+        </Suspense>
         <InstallAppCard />
+        <Suspense fallback={<Skeleton className="h-32" />}>
+          <DeleteAccountCard />
+        </Suspense>
         <LegalLinks />
       </div>
     </>
@@ -85,6 +91,26 @@ async function ExportCard() {
   return (
     <Card title="Export" description="Download your transactions as a CSV file for Excel or Google Sheets.">
       <ExportForm from={startOf(today, "year")} to={today} />
+    </Card>
+  );
+}
+
+/** Viewers can't add transactions, so they get no import. */
+async function ImportCard() {
+  const ledger = await getLedger();
+  if (ledger.role === "viewer") return null;
+  return (
+    <Card title="Import" description="Add transactions from a CSV file, such as one exported here or from another app.">
+      <ImportForm />
+    </Card>
+  );
+}
+
+async function DeleteAccountCard() {
+  const ledger = await getLedger();
+  return (
+    <Card title="Delete account">
+      <DeleteAccount plan={await getDeletionPlan(ledger)} />
     </Card>
   );
 }

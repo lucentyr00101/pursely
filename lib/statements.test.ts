@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cutoffIn, dueFor, lastClosed, statementAt, statementChoices, statementFor, statementStart } from "./statements";
+import { cutoffIn, dueFor, lastClosed, pickStatement, statementAt, statementChoices, statementFor, statementStart } from "./statements";
 
 describe("cutoffIn", () => {
   test("uses the cutoff day in the month", () => {
@@ -78,5 +78,32 @@ describe("lastClosed", () => {
   });
   test("a statement closing today counts as closed", () => {
     expect(lastClosed("2026-11-28", 28)).toBe("2026-11-28");
+  });
+});
+
+describe("pickStatement", () => {
+  test("a new purchase goes on the automatic statement, unpinned", () => {
+    expect(pickStatement("2026-11-29", 28, null, null)).toEqual({ statement: "2026-12-28", pinned: false });
+    expect(pickStatement("2026-11-29", 28, "2026-12-28", null)).toEqual({ statement: "2026-12-28", pinned: false });
+  });
+  test("the previous or next statement, chosen by hand, is pinned", () => {
+    expect(pickStatement("2026-11-29", 28, "2026-11-28", null)).toEqual({ statement: "2026-11-28", pinned: true });
+    expect(pickStatement("2026-11-29", 28, "2027-01-28", null)).toEqual({ statement: "2027-01-28", pinned: true });
+  });
+  test("any other statement is refused", () => {
+    expect(pickStatement("2026-11-29", 28, "2027-02-28", null)).toBeNull();
+    expect(pickStatement("2026-11-29", 28, "2026-12-27", null)).toBeNull();
+  });
+  test("an edit that leaves date and statement alone keeps the stored one, even after the cutoff changed", () => {
+    const stored = { date: "2026-11-29", statement: "2026-12-28" };
+    expect(pickStatement("2026-11-29", 15, null, stored)).toBe("keep");
+    expect(pickStatement("2026-11-29", 15, "2026-12-28", stored)).toBe("keep");
+  });
+  test("a new date or a different statement is worked out again", () => {
+    const stored = { date: "2026-11-29", statement: "2026-12-28" };
+    expect(pickStatement("2026-12-30", 28, null, stored)).toEqual({ statement: "2027-01-28", pinned: false });
+    expect(pickStatement("2026-11-29", 28, "2026-11-28", stored)).toEqual({ statement: "2026-11-28", pinned: true });
+    // The stored statement isn't one of the new date's choices, so it can't be carried over by hand.
+    expect(pickStatement("2027-03-05", 28, "2026-12-28", stored)).toBeNull();
   });
 });

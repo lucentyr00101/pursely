@@ -1,7 +1,10 @@
 "use server";
 
 import { refresh } from "next/cache";
+import { cookies } from "next/headers";
 import { z } from "zod";
+import { auth } from "@/lib/auth";
+import { MAX_IMPORT_BYTES, parseCsv, readImport, type ImportError } from "@/lib/csv";
 import { getLedgerContext, getSession, getToday } from "@/lib/session";
 import * as household from "@/lib/household";
 import type { LedgerContext } from "@/lib/household";
@@ -340,6 +343,41 @@ export async function saveSettings(_: ActionState, formData: FormData): Promise<
   return done();
 }
 
+// ---------- Import ----------
+
+export type ImportState = {
+  ok: boolean;
+  error?: string;
+  /** Echoes the form's `fileKey`, so the form can tell which file a result is about. */
+  fileKey?: string;
+  /** False for a check that added nothing yet. */
+  committed?: boolean;
+  summary?: data.ImportSummary;
+  /** The first rows that couldn't be read, and how many there were in all. */
+  skipped?: ImportError[];
+  skippedCount?: number;
+};
+
+/** Checks a CSV of transactions (`intent` "check") or adds its rows (`intent` "import"). */
+export async function importCsv(_: ImportState, formData: FormData): Promise<ImportState> {
+  const ctx = await editorContext();
+  if (isFailure(ctx)) return ctx;
+  const file = formData.get("file");
+  const fileKey = String(formData.get("fileKey") ?? "");
+  const failed = (error: string): ImportState => ({ ok: false, error, fileKey });
+  if (!(file instanceof File) || file.size === 0) return failed("Choose a CSV file.");
+  if (file.size > MAX_IMPORT_BYTES) return failed("That file is too large. Split it and import each part.");
+  const read = readImport(parseCsv(await file.text()));
+  if (typeof read === "string") return failed(read);
+  if (!read.rows.length) return failed(read.errors[0] ? `No row could be read. Line ${read.errors[0].line}: ${read.errors[0].message}` : "The file has no transactions.");
+
+  const commit = formData.get("intent") === "import";
+  const summary = await data.importTransactions(ctx.ledgerId, ctx.userId, read.rows, { commit });
+  if (typeof summary === "string") return failed(summary);
+  if (commit) refresh();
+  return { ok: true, fileKey, committed: commit, summary, skipped: read.errors.slice(0, 5), skippedCount: read.errors.length };
+}
+
 // ---------- Household ----------
 
 const inviteSchema = z.object({
@@ -415,4 +453,30 @@ export async function respondToInvite(
   }
   const error = await household.acceptInvite(ctx, session.user.email, inviteId, parsed.data);
   return error ? fail(error) : done();
+}
+
+// ---------- Account ----------
+
+/**
+ * Deletes the caller's account for good: their ledger (a household keeps its own), then their
+ * sign-in records. `confirmation` is the word typed into the dialog.
+ */
+export async function deleteAccountAction(confirmation: string): Promise<ActionState> {
+  if (typeof confirmation !== "string" || confirmation.trim().toLowerCase() !== "delete") return fail('Type "delete" to confirm.');
+  const session = await getSession();
+  if (!session) return fail("Your session expired. Sign in again.");
+  const { id, email } = session.user;
+  const error = await household.deleteAccountData(id, email);
+  if (error) return fail(error);
+
+  const { internalAdapter } = await auth.$context;
+  await internalAdapter.deleteUserSessions(id);
+  await internalAdapter.deleteAccounts(id);
+  await internalAdapter.deleteUser(id);
+  // The session cookie is cached for a few minutes, so it would keep this browser signed in to nothing.
+  const jar = await cookies();
+  for (const { name } of jar.getAll()) {
+    if (name.includes("better-auth.")) jar.set(name, "", { path: "/", maxAge: 0, httpOnly: true, sameSite: "lax", secure: name.startsWith("__Secure-") });
+  }
+  return { ok: true, at: Date.now() };
 }

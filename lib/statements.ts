@@ -91,6 +91,27 @@ export function statementChoices(date: string, cutoffDay: number): [string, stri
   return [statementFor(date, cutoffDay, -1), statementFor(date, cutoffDay), statementFor(date, cutoffDay, 1)];
 }
 
+/**
+ * The statement a card purchase on `date` is saved on. `chosen` is the statement picked by hand, or
+ * null for the automatic one. `stored` is what the purchase already had, given only when it stays on
+ * the same card: with the same date and no other statement chosen it keeps that one ("keep"), so
+ * editing a note never moves it even after the card's cutoff changed. Otherwise the statement must
+ * be the previous, automatic or next one, and anything but the automatic one is pinned. Null when
+ * `chosen` is none of those.
+ */
+export function pickStatement(
+  date: string,
+  cutoffDay: number,
+  chosen: string | null,
+  stored: { date: string; statement: string } | null,
+): "keep" | { statement: string; pinned: boolean } | null {
+  if (stored && stored.date === date && (chosen ?? stored.statement) === stored.statement) return "keep";
+  const choices = statementChoices(date, cutoffDay);
+  const statement = chosen ?? choices[1];
+  if (!choices.includes(statement)) return null;
+  return { statement, pinned: statement !== choices[1] };
+}
+
 export function ordinal(day: number): string {
   const teen = day % 100 >= 11 && day % 100 <= 13;
   const suffix = teen ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[day % 10] ?? "th";

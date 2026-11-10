@@ -2,6 +2,8 @@ import "server-only";
 import { ObjectId, type AnyBulkWriteOperation, type ClientSession, type Filter } from "mongodb";
 import { db } from "./db";
 import { SYSTEM_CATEGORIES, type IconKey, type TxType } from "./category-defs";
+import { budgetsFor as budgetsOf } from "./budgets";
+import type { ImportRow } from "./csv";
 import { addDays, addMonths, buckets, startOf, toIso, toUtc, type Granularity, type Range } from "./dates";
 import { DEFAULT_CURRENCY, formatMoney } from "./money";
 import { firstOccurrence, keepEnd, monthlyTotals, occurrence } from "./recurring";
@@ -13,7 +15,7 @@ import {
   dueFor,
   isFixedMethod,
   lastClosed,
-  statementChoices,
+  pickStatement,
   statementFor,
   type FixedMethod,
   type Method,
@@ -637,19 +639,16 @@ async function resolvePayment(
 
   const card = await usableCard(ledgerId, input.cardId, existing?.cardId);
   if (!card) return "Pick a valid card.";
-  const sameCard = Boolean(existing?.cardId?.equals(card._id));
-  const date = toUtc(input.date);
-  const stored = existing?.statementDate && toIso(existing.statementDate);
-  if (sameCard && +existing!.date === +date && stored && (input.statement ?? stored) === stored) {
-    return { set: { method: "card", cardId: card._id }, unset: [] };
-  }
-  const choices = statementChoices(input.date, card.cutoffDay);
-  const statement = input.statement ?? choices[1];
-  if (!choices.includes(statement)) return "Pick a valid statement.";
-  const pinned = statement !== choices[1];
+  const stored =
+    existing?.cardId?.equals(card._id) && existing.statementDate
+      ? { date: toIso(existing.date), statement: toIso(existing.statementDate) }
+      : null;
+  const picked = pickStatement(input.date, card.cutoffDay, input.statement, stored);
+  if (!picked) return "Pick a valid statement.";
+  if (picked === "keep") return { set: { method: "card", cardId: card._id }, unset: [] };
   return {
-    set: { method: "card", cardId: card._id, statementDate: toUtc(statement), ...(pinned && { statementPinned: true as const }) },
-    unset: pinned ? [] : ["statementPinned"],
+    set: { method: "card", cardId: card._id, statementDate: toUtc(picked.statement), ...(picked.pinned && { statementPinned: true as const }) },
+    unset: picked.pinned ? [] : ["statementPinned"],
   };
 }
 
@@ -668,9 +667,11 @@ export async function createTransaction(
   input: TransactionInput,
 ): Promise<string | null> {
   await ensureSetup();
-  const resolved = await resolveCategory(ledgerId, input.type, input.categoryId);
+  const [resolved, payment] = await Promise.all([
+    resolveCategory(ledgerId, input.type, input.categoryId),
+    resolvePayment(ledgerId, input, null),
+  ]);
   if (!resolved) return "Pick a valid category.";
-  const payment = await resolvePayment(ledgerId, input, null);
   if (typeof payment === "string") return payment;
   const now = new Date();
   await transactions.insertOne({
@@ -691,13 +692,12 @@ export async function createTransaction(
 
 export async function updateTransaction(ledgerId: string, id: string, input: TransactionInput): Promise<string | null> {
   if (typeof id !== "string" || !ObjectId.isValid(id)) return "Transaction not found.";
-  const resolved = await resolveCategory(ledgerId, input.type, input.categoryId);
-  if (!resolved) return "Pick a valid category.";
   const _id = new ObjectId(id);
-  const existing = await transactions.findOne(
-    { _id, ledgerId },
-    { projection: { date: 1, method: 1, cardId: 1, statementDate: 1, statementPinned: 1 } },
-  );
+  const [resolved, existing] = await Promise.all([
+    resolveCategory(ledgerId, input.type, input.categoryId),
+    transactions.findOne({ _id, ledgerId }, { projection: { date: 1, method: 1, cardId: 1, statementDate: 1, statementPinned: 1 } }),
+  ]);
+  if (!resolved) return "Pick a valid category.";
   if (!existing) return "Transaction not found.";
   const payment = await resolvePayment(ledgerId, input, existing);
   if (typeof payment === "string") return payment;
@@ -1512,15 +1512,7 @@ export type BudgetStatus = {
 
 /** Each category's budget for `month` (YYYY-MM-01): its latest entry starting on or before it. */
 function budgetsFor(docs: BudgetDoc[], month: string): Map<string, number> {
-  const latest = new Map<string, BudgetDoc>();
-  for (const b of docs) {
-    const from = b.from ?? "";
-    if (from > month) continue;
-    const id = b.categoryId.toHexString();
-    const seen = latest.get(id);
-    if (!seen || from > (seen.from ?? "")) latest.set(id, b);
-  }
-  return new Map([...latest].flatMap(([id, b]) => (b.amount === null ? [] : [[id, b.amount] as const])));
+  return budgetsOf(docs.map((b) => ({ categoryId: b.categoryId.toHexString(), from: b.from, amount: b.amount })), month);
 }
 
 /**
@@ -1644,6 +1636,109 @@ export async function exportRows(ledgerId: string, from: string, to: string) {
       statement: t.statementDate ?? "",
       note: t.note,
     }));
+}
+
+// ---------- Import ----------
+
+export type ImportSummary = {
+  /** Rows that are (or, on a check, would be) added. */
+  added: number;
+  /** Rows left out because the ledger already has the same transaction. */
+  duplicates: number;
+  /** Category names in the file that match none of the ledger's; their rows go under Other. */
+  unknownCategories: string[];
+  /** Payment methods in the file that match none of the ledger's; their rows get no method. */
+  unknownMethods: string[];
+};
+
+/**
+ * Adds the rows of a CSV, or with `commit: false` only reports what adding them would do. Categories,
+ * subcategories and payment methods are matched by name, ignoring case. A row equal to a transaction
+ * the ledger already has (date, type, amount, category and note) is left out, so importing a file
+ * twice, or a file exported from here, adds nothing; a file that repeats a row keeps the extra ones.
+ */
+export async function importTransactions(
+  ledgerId: string,
+  createdBy: string,
+  rows: ImportRow[],
+  { commit }: { commit: boolean },
+): Promise<ImportSummary | string> {
+  await ensureSetup();
+  if (!rows.length) return { added: 0, duplicates: 0, unknownCategories: [], unknownMethods: [] };
+  const dates = rows.map((r) => r.date).sort();
+  const [catDocs, cardDocs, existing] = await Promise.all([
+    categories.find({ ...visibleTo(ledgerId), archivedAt: null }).sort({ createdAt: 1, _id: 1 }).toArray(),
+    cards.find({ ledgerId }).sort({ archivedAt: 1, createdAt: 1 }).toArray(),
+    transactions
+      .find(inRange(ledgerId, dates[0], dates[dates.length - 1]), { projection: { date: 1, type: 1, amount: 1, categoryId: 1, subcategoryId: 1, note: 1 } })
+      .toArray(),
+  ]);
+
+  // The ledger's own category wins over a system one of the same name; among cards, an active one wins.
+  const tops = new Map<string, CategoryDoc>();
+  const subs = new Map<string, CategoryDoc>();
+  const other = new Map<TxType, CategoryDoc>();
+  for (const c of catDocs.toSorted((a, b) => Number(a.ledgerId === null) - Number(b.ledgerId === null))) {
+    const name = c.name.trim().toLowerCase();
+    if (c.parentId) subs.set(`${c.parentId.toHexString()}|${name}`, subs.get(`${c.parentId.toHexString()}|${name}`) ?? c);
+    else tops.set(`${c.type}|${name}`, tops.get(`${c.type}|${name}`) ?? c);
+    if (c.key === "other-expense" || c.key === "other-income") other.set(c.type, c);
+  }
+  const methods = new Map<string, { method: Method; card?: CardDoc }>();
+  for (const c of cardDocs.toReversed()) {
+    methods.set(c.name.trim().toLowerCase(), { method: "card", card: c });
+    methods.set(`${c.name} ••${c.last4}`.toLowerCase(), { method: "card", card: c });
+  }
+  for (const m of ["cash", "gcash", "maya", "others"] as const) methods.set(methodLabel(m, undefined)!.toLowerCase(), { method: m });
+
+  const keyOf = (t: { date: string; type: TxType; amount: number; categoryId: ObjectId; subcategoryId: ObjectId | null; note: string }) =>
+    [t.date, t.type, t.amount, t.categoryId.toHexString(), t.subcategoryId?.toHexString() ?? "", t.note].join("\u0000");
+  const have = new Map<string, number>();
+  for (const t of existing) {
+    const key = keyOf({ ...t, date: toIso(t.date) });
+    have.set(key, (have.get(key) ?? 0) + 1);
+  }
+
+  const unknownCategories = new Set<string>();
+  const unknownMethods = new Set<string>();
+  const now = new Date();
+  const docs: TransactionDoc[] = [];
+  let duplicates = 0;
+  for (const row of rows) {
+    const named = tops.get(`${row.type}|${row.category.toLowerCase()}`);
+    const top = named ?? other.get(row.type);
+    if (!top) return "This ledger has no category to import into.";
+    if (!named && row.category) unknownCategories.add(row.category);
+    const sub = named && row.subcategory ? (subs.get(`${top._id.toHexString()}|${row.subcategory.toLowerCase()}`) ?? null) : null;
+    if (named && row.subcategory && !sub) unknownCategories.add(`${row.category} > ${row.subcategory}`);
+
+    const tx = { date: row.date, type: row.type, amount: row.amount, categoryId: top._id, subcategoryId: sub?._id ?? null, note: row.note };
+    const key = keyOf(tx);
+    const left = have.get(key) ?? 0;
+    if (left > 0) {
+      have.set(key, left - 1);
+      duplicates++;
+      continue;
+    }
+
+    let payment: PaymentFields = {};
+    if (row.paidWith) {
+      const paid = methods.get(row.paidWith.toLowerCase());
+      if (!paid) unknownMethods.add(row.paidWith);
+      else if (!paid.card) payment = { method: paid.method };
+      else {
+        // A statement the file names is kept when it is one this purchase could be on; otherwise the automatic one.
+        const picked = pickStatement(row.date, paid.card.cutoffDay, row.statement, null) ?? pickStatement(row.date, paid.card.cutoffDay, null, null);
+        if (picked && picked !== "keep") {
+          payment = { method: "card", cardId: paid.card._id, statementDate: toUtc(picked.statement), ...(picked.pinned && { statementPinned: true as const }) };
+        }
+      }
+    }
+    docs.push({ _id: new ObjectId(), ledgerId, createdBy, ...tx, date: toUtc(row.date), ...payment, createdAt: now, updatedAt: now });
+  }
+
+  if (commit && docs.length) await transactions.insertMany(docs, { ordered: false });
+  return { added: docs.length, duplicates, unknownCategories: [...unknownCategories].slice(0, 20), unknownMethods: [...unknownMethods].slice(0, 20) };
 }
 
 // ---------- Moving a ledger (accepting a household invite) ----------

@@ -8,7 +8,7 @@ export default function PrivacyPage() {
   return (
     <article>
       <h1>Privacy Policy</h1>
-      <p className="text-sm text-subtle">Effective October 18, 2026</p>
+      <p className="text-sm text-subtle">Effective November 10, 2026</p>
 
       <p>
         Pursely is a personal expense tracker. This policy explains what information Pursely collects when you use
@@ -75,9 +75,10 @@ export default function PrivacyPage() {
       <h2>Retention and deletion</h2>
       <p>
         Your data is kept while your account exists. You can export your transactions as CSV from Settings at any time.
-        To delete your account and all of its data, email{" "}
+        You can delete your account and all of its data yourself from Settings, at once. You can also email{" "}
         <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> from the address you sign in with, and it will be
-        deleted within 30 days. Records you added to a household ledger stay with that household after you leave it.
+        deleted within 30 days. Records you added to a household ledger stay with that household after you leave it
+        or delete your account.
       </p>
 
       <h2>Security</h2>

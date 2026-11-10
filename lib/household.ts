@@ -58,12 +58,15 @@ function ensureHouseholdSetup(): Promise<void> {
 /** The ledger a user works in: their household's, a pinned one, or their own. */
 export async function resolveLedger(userId: string): Promise<LedgerContext> {
   await ensureHouseholdSetup();
-  const household = await households.findOne({ "members.userId": userId });
+  // Both lookups at once: this runs on every request, and most users are in no household.
+  const [household, pinned] = await Promise.all([
+    households.findOne({ "members.userId": userId }),
+    userLedgers.findOne({ _id: userId }),
+  ]);
   if (household) {
     const member = household.members.find((m) => m.userId === userId)!;
     return { userId, ledgerId: household.ledgerId, role: member.role, householdId: household._id.toHexString() };
   }
-  const pinned = await userLedgers.findOne({ _id: userId });
   if (pinned) return { userId, ledgerId: pinned.ledgerId, role: "owner", householdId: null };
   return { userId, ledgerId: userId, role: "owner", householdId: null };
 }
@@ -341,6 +344,53 @@ export async function leaveHousehold(ctx: LedgerContext): Promise<string | null>
     if (household.members.length > 1) return "Transfer ownership or remove everyone before leaving.";
     // An owner on their own turns back into a solo user and keeps the ledger.
     await dissolve(household, session);
+    return null;
+  });
+}
+
+// ---------- Deleting an account ----------
+
+/**
+ * What deleting the user's account does to the ledger: "blocked" for an owner who still has members,
+ * "leave" for a member (the household keeps what they added), "erase" for everyone else (the ledger
+ * and everything on it goes).
+ */
+export type DeletionPlan = "blocked" | "leave" | "erase";
+
+export async function getDeletionPlan(ctx: LedgerContext): Promise<DeletionPlan> {
+  if (!ctx.householdId) return "erase";
+  const household = await households.findOne({ "members.userId": ctx.userId });
+  if (!household) return "erase";
+  if (household.ownerId !== ctx.userId) return "leave";
+  return household.members.length > 1 ? "blocked" : "erase";
+}
+
+/**
+ * Removes everything of the user's outside Better Auth's own collections: their ledger (unless a
+ * household keeps it), their membership, pinned ledger and the invites sent to them. The caller
+ * deletes the sign-in records afterwards. Membership is read again here rather than taken from `ctx`,
+ * so a change made in another tab can't make this erase a ledger that others now share.
+ */
+export async function deleteAccountData(userId: string, email: string): Promise<string | null> {
+  if (typeof userId !== "string") return "Account not found.";
+  await ensureHouseholdSetup();
+  return inTransaction(async (session) => {
+    const household = await households.findOne({ "members.userId": userId }, { session });
+    if (household && household.ownerId !== userId) {
+      await households.updateOne({ _id: household._id }, { $pull: { members: { userId } } }, { session });
+      const rest = await households.findOne({ _id: household._id }, { session });
+      if (rest && rest.members.length <= 1) await dissolve(rest, session);
+    } else {
+      if (household && household.members.length > 1) return "Transfer ownership or remove everyone before deleting your account.";
+      if (household) {
+        await households.deleteOne({ _id: household._id }, { session });
+        await invites.deleteMany({ householdId: household._id }, { session });
+      }
+      const pinned = household ? null : await userLedgers.findOne({ _id: userId }, { session });
+      await deleteLedgerData(household?.ledgerId ?? pinned?.ledgerId ?? userId, session);
+    }
+    await userLedgers.deleteOne({ _id: userId }, { session });
+    await invites.deleteMany({ email: normalizeEmail(email) }, { session });
     return null;
   });
 }
