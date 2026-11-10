@@ -17,12 +17,12 @@ bun run build        # production build; also catches Cache Components errors (s
 bun run lint         # eslint
 bunx tsc --noEmit    # typecheck
 bunx next typegen    # regenerate PageProps/LayoutProps route types after adding a route
-bun test             # unit tests for the date, statement and recurring math (lib/*.test.ts)
+bun test             # unit tests for the date, statement, recurring, budget and CSV logic (lib/*.test.ts)
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint, tests, typegen, typecheck and build on pushes to `main` and on pull requests, with placeholder env values and no database.
 
-Tests cover only the pure math in `lib/`. Verify other changes with typecheck, lint, `bun run build`, and the running app (see "Testing signed-in pages").
+Tests cover only the pure logic in `lib/`. `lib/data.ts` can't be imported by a test (it needs `server-only` and a database), so logic worth testing lives in a pure module it calls: `budgetsFor` in `lib/budgets.ts`, `pickStatement` in `lib/statements.ts`, `parseCsv` and `readImport` in `lib/csv.ts`. Verify other changes with typecheck, lint, `bun run build`, and the running app (see "Testing signed-in pages").
 
 If the dev server keeps serving old CSS after `app/globals.css` changes, the Turbopack disk cache is stale: stop the server, `rm -rf .next/dev`, restart.
 
@@ -54,7 +54,7 @@ Functions run in Vercel region `hkg1` (`vercel.json`), close to the database, ex
 - `lib/session.ts`: `getSession()` (connects the database, then reads Better Auth's session; use it instead of calling `auth.api.getSession` directly), `getUser()` (React `cache`, redirects to `/`), `getLedger()` (user plus `{ ledgerId, role, householdId }`, redirects), `getLedgerContext()` (returns null; for actions and route handlers; replaces the removed `getUserId()`), `getToday()` (uses the viewer's timezone from the `tz` cookie, which `components/timezone-cookie.tsx` sets).
 - `lib/data.ts`: the server-only data access layer and the only place that touches collections. Every query is scoped by `ledgerId` (the household's ledger, or the user's own id when solo), and writes record the `createdBy` user. Returns plain serializable objects (ids as hex strings).
 - `lib/household.ts`: households, invites and membership. `resolveLedger(userId)` maps a user to their ledger and role (owner, editor, viewer) on every request, so removals and role changes apply immediately, even to stale pages. Pages take a `canEdit` prop and hide add/edit controls for viewers; the server check is what counts.
-- `app/actions.ts`: Server Actions. They re-authenticate with `getLedgerContext()`, refuse viewers ("You have view-only access to this household."), validate with zod, call `lib/data.ts`, and return `ActionState` `{ ok, error? }` for `useActionState`. `app/api/export/route.ts` produces the CSV export.
+- `app/actions.ts`: Server Actions. They re-authenticate with `getLedgerContext()`, refuse viewers ("You have view-only access to this household."), validate with zod, call `lib/data.ts`, and return `ActionState` `{ ok, error? }` for `useActionState`. `app/api/export/route.ts` produces the CSV export. `importCsv` reads one back (`lib/csv.ts`, then `importTransactions` in `lib/data.ts`): the form sends the file twice, first with `intent` "check" for a summary and then "import". Categories, subcategories and payment methods match by name ignoring case; an unknown category goes under Other, an unknown method is dropped, and a row equal to an existing transaction (date, type, amount, category, note) is skipped, so importing a file twice adds nothing. A file is capped at 5,000 rows and 900 KB, under the 1MB Server Action body limit.
 - Server Action arguments come from the client and aren't type-checked at runtime. Check every id argument with `isId()` (24-hex `idSchema`) before it reaches a query, or an object like `{"$ne": ""}` becomes a Mongo operator. Functions in `lib/household.ts` also guard `typeof id === "string"`.
 
 **Data model (MongoDB collections):**
@@ -70,6 +70,7 @@ Functions run in Vercel region `hkg1` (`vercel.json`), close to the database, ex
 - `invites`: `{ householdId, email, role, invitedBy }`, for registered emails only. Accepting offers merge (move the invitee's data into the household) or replace (delete it). A member who leaves or is removed gets a fresh empty ledger.
 - `userLedgers`: `_id` is the userId; pins a user to a ledger other than their own id: the fresh one for a departed member, or the household ledger for a remaining owner whose ledger isn't their own id.
 - Better Auth owns `user`, `session`, `account` and `verification`.
+- Deleting an account (Settings, `deleteAccountAction`): `deleteAccountData` in `lib/household.ts` erases the user's ledger in one transaction, unless a household keeps it. A member just leaves and their entries stay; an owner with other members is refused. Then the action deletes the Better Auth records through `internalAdapter` and expires the session cookies, since the cookie cache would otherwise keep the browser signed in for up to 5 minutes. The privacy page describes this, so keep the two in step.
 
 **Dates and ranges (`lib/dates.ts`, shared client/server):** calendar dates are `YYYY-MM-DD` strings, and all math is in UTC so the server's timezone never matters. `resolveRange()` turns dashboard URL params (`preset` = today|week|month|year|last|custom, `n`, `unit`, `offset`, `from`, `to`, `group`) into a concrete range and bar size, widening the grouping when it would produce more than 400 bars. Weeks start Monday. Aggregation buckets come from Mongo `$dateTrunc` with `timezone: "UTC"`, `startOfWeek: "monday"`, and empty buckets are filled by `buckets()`.
 
