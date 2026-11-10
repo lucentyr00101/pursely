@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Nothing here reaches a database or Google: the build only needs the variables to exist.
+    env:
+      MONGODB_URI: mongodb://127.0.0.1:27017
+      BETTER_AUTH_SECRET: ci-only-secret-not-used-anywhere
+      BETTER_AUTH_URL: http://localhost:3000
+      GOOGLE_CLIENT_ID: ci
+      GOOGLE_CLIENT_SECRET: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun test
+      # Route types (PageProps, LayoutProps) are generated, so the typecheck needs them first.
+      - run: bunx next typegen
+      - run: bunx tsc --noEmit
+      - run: bun run build
